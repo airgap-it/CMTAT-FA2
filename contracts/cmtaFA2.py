@@ -150,8 +150,8 @@ class BaseFA2(sp.Contract):
     def transfer(self, transfers):
         """As per FA2 standard, allows a token owner or operator to transfer tokens"""
         sp.set_type(transfers, Transfer.get_batch_type())
-        sp.for transfer in transfers:
-            sp.for tx in transfer.txs:
+        with sp.for_('transfer', transfers) as transfer:
+            with sp.for_('tx', transfer.txs) as tx:
                 from_user = LedgerKey.make(tx.token_id, transfer.from_)
                 to_user = LedgerKey.make(tx.token_id, tx.to_)
                 operator_key = OperatorKey.make(tx.token_id, transfer.from_, sp.sender)
@@ -162,17 +162,17 @@ class BaseFA2(sp.Contract):
                 self.data.ledger[from_user] = sp.as_nat(self.data.ledger[from_user] - tx.amount)
                 self.data.ledger[to_user] = self.data.ledger.get(to_user, 0) + tx.amount
                 
-                sp.if sp.sender != transfer.from_:
+                with sp.if_(sp.sender != transfer.from_):
                     del self.data.operators[operator_key]
                     
-                sp.if self.data.ledger.get(from_user,sp.nat(0)) == sp.nat(0):
+                with sp.if_(self.data.ledger.get(from_user,sp.nat(0)) == sp.nat(0)):
                     del self.data.ledger[from_user]
 
     @sp.entry_point
     def update_operators(self, update_operators):
         """As per FA2 standard, allows a token owner to set an operator who will be allowed to perform transfers on her/his behalf"""
         sp.set_type(update_operators,UpdateOperator.get_batch_type())
-        sp.for update_operator in update_operators:
+        with sp.for_('update_operator', update_operators) as update_operator:
             with update_operator.match_cases() as argument:
                 with argument.match("add_operator") as update:
                     sp.verify(update.owner == sp.sender, message=FA2ErrorMessage.NOT_OWNER)
@@ -189,7 +189,7 @@ class BaseFA2(sp.Contract):
         sp.set_type(balance_of_request, BalanceOf.get_type())
         
         responses = sp.local("responses", sp.set_type_expr(sp.list([]),BalanceOf.get_response_type()))
-        sp.for request in balance_of_request.requests:
+        with sp.for_('request', balance_of_request.requests) as request:
             sp.verify(self.data.token_metadata.contains(request.token_id), message = FA2ErrorMessage.TOKEN_UNDEFINED)
             responses.value.push(sp.record(request = request, balance = self.data.ledger.get(LedgerKey.make(request.token_id, request.owner),0)))
             
@@ -227,12 +227,12 @@ class AdministrableFA2(BaseFA2):
         """The definition of a new token requires its metadata to be set. Only the administrators of a certain token can edit existing. 
         If no token metadata is set for a given ID the sender will become admin of that token automatically"""
         sp.set_type(token_metadata_list, TokenMetadata.get_batch_type())
-        sp.for token_metadata in token_metadata_list:
+        with sp.for_('token_metadata', token_metadata_list) as token_metadata:
             administrator_ledger_key = LedgerKey.make(token_metadata.token_id, sp.sender)
-            sp.if self.data.token_metadata.contains(token_metadata.token_id):
+            with sp.if_(self.data.token_metadata.contains(token_metadata.token_id)):
                 sp.verify(self.data.administrators.get(administrator_ledger_key, sp.nat(0))==AdministratorState.IS_ADMIN, message = AdministrableErrorMessage.NOT_ADMIN)
-            sp.else:
-                sp.if sp.len(self.data.administrator_allowmap)>0:    
+            with sp.else_():
+                with sp.if_(sp.len(self.data.administrator_allowmap)>0):
                     sp.verify(self.data.administrator_allowmap.get(sp.sender, False), message = AdministrableErrorMessage.NOT_ADMIN)
                 self.data.administrators[administrator_ledger_key] = AdministratorState.IS_ADMIN    
             self.data.token_metadata[token_metadata.token_id] = token_metadata
@@ -314,6 +314,23 @@ class Rule:
     def get_batch_type():
         return sp.TList(Rule.get_type())
                               
+class SnapshotLookupKey:
+    def get_type():
+        return sp.TRecord(token_id = sp.TNat, snapshot_timestamp = sp.TTimestamp)
+    
+    def make(token_id, snapshot_timestamp):
+        return sp.set_type_expr(sp.record(token_id = token_id, snapshot_timestamp = snapshot_timestamp), SnapshotLookupKey.get_type())
+
+class SnapshotLedgerKey:
+    """Snapshot Ledger key used when looking up balances"""
+    def get_type():
+        """Returns a single ledger key type, layouted"""
+        return sp.TRecord(token_id = sp.TNat, owner = sp.TAddress, snapshot_timestamp = sp.TTimestamp).layout(("token_id", ("owner", "snapshot_timestamp")))
+        
+    def make(token_id, owner, snapshot_timestamp):
+        """Creates a typed ledger key"""
+        return sp.set_type_expr(sp.record(token_id = token_id, owner = owner,  snapshot_timestamp = snapshot_timestamp), SnapshotLedgerKey.get_type())
+
 
 class CMTAFA2ErrorMessage:
     """Static enum used for the FA2 related errors, using the `FA2_` prefix"""
@@ -322,13 +339,17 @@ class CMTAFA2ErrorMessage:
     TOKEN_EXISTS = "{}TOKEN_EXISTS".format(PREFIX)
     SAME_REASSIGN = "{}SAME_REASSIGN".format(PREFIX)
     CANNOT_TRANSFER = "{}CANNOT_TRANSFER".format(PREFIX)
+    SNAPSHOT_IN_PAST = "{}SNAPSHOT_IN_PAST".format(PREFIX)
+    SNAPSHOT_ONGOING = "{}SNAPSHOT_ONGOING".format(PREFIX)
         
 class CMTAFA2(AdministrableFA2):
     """FA2 Contract blueprint for CMTA tokens""" 
     def get_init_storage(self):
         """Returns the initial storage of the contract"""
         storage = super().get_init_storage()
-        storage['token_context'] = sp.big_map(tkey=sp.TNat, tvalue=sp.TRecord(contact=sp.TBytes, is_paused=sp.TBool, can_transfer_rule_contract=sp.TAddress))
+        storage['snapshot_ledger'] = sp.big_map(tkey=SnapshotLedgerKey.get_type(), tvalue=sp.TNat)
+        storage['snapshot_lookup'] = sp.big_map(tkey=SnapshotLookupKey.get_type(), tvalue=sp.TTimestamp)
+        storage['token_context'] = sp.big_map(tkey=sp.TNat, tvalue=sp.TRecord(contact=sp.TBytes, is_paused=sp.TBool, can_transfer_rule_contract=sp.TAddress, current_snapshot=sp.TOption(sp.TTimestamp), next_snapshot=sp.TOption(sp.TTimestamp)))
         storage['identities'] = sp.big_map(tkey=sp.TAddress, tvalue=sp.TBytes)
         return storage
         
@@ -342,17 +363,17 @@ class CMTAFA2(AdministrableFA2):
         """Initialise the token with the required additional token context, can only be called once per token and only one of its admin can call this"""
         sp.set_type_expr(token_ids, sp.TList(sp.TNat))
 
-        sp.for token_id in token_ids:
+        with sp.for_('token_id', token_ids) as token_id:
             sp.verify((~self.data.token_context.contains(token_id)), message = CMTAFA2ErrorMessage.TOKEN_EXISTS)            
             administrator_ledger_key = LedgerKey.make(token_id, sp.sender)
             sp.verify(self.data.administrators.get(administrator_ledger_key, sp.nat(0))==AdministratorState.IS_ADMIN, message = AdministrableErrorMessage.NOT_ADMIN)
-            self.data.token_context[token_id] = sp.record(contact=NULL_BYTES, is_paused=False, can_transfer_rule_contract=NULL_ADDRESS)
+            self.data.token_context[token_id] = sp.record(contact=NULL_BYTES, is_paused=False, can_transfer_rule_contract=NULL_ADDRESS, current_snapshot=sp.none, next_snapshot=sp.none)
         
     @sp.entry_point
     def set_contacts(self, contacts):
         """Allows to set the contact of multiple tokens, only token a administrator can do this"""
         sp.set_type_expr(contacts, Contact.get_batch_type())
-        sp.for contact in contacts:
+        with sp.for_('contact', contacts) as contact:
             token_context = self.data.token_context[contact.token_id]
             administrator_ledger_key = LedgerKey.make(contact.token_id, sp.sender)
             sp.verify(self.data.administrators.get(administrator_ledger_key, sp.nat(0))==AdministratorState.IS_ADMIN, message = AdministrableErrorMessage.NOT_ADMIN)
@@ -363,7 +384,7 @@ class CMTAFA2(AdministrableFA2):
     def issue(self, token_amounts):
         """Allows to issue new tokens to the calling admin's address, only a token administrator can do this"""
         sp.set_type(token_amounts, TokenAmount.get_batch_type())
-        sp.for token_amount in token_amounts:
+        with sp.for_('token_amount', token_amounts) as token_amount:
             administrator_ledger_key = LedgerKey.make(token_amount.token_id, sp.sender)
             sp.verify(self.data.administrators.get(administrator_ledger_key, sp.nat(0))==AdministratorState.IS_ADMIN, message = AdministrableErrorMessage.NOT_ADMIN)
             sp.verify(self.data.token_metadata.contains(token_amount.token_id), message = FA2ErrorMessage.TOKEN_UNDEFINED)
@@ -374,21 +395,21 @@ class CMTAFA2(AdministrableFA2):
     def redeem(self, token_amounts):
         """Allows to redeem tokens on the calling admin's address, only a token administrator can do this"""
         sp.set_type(token_amounts, TokenAmount.get_batch_type())
-        sp.for token_amount in token_amounts:
+        with sp.for_('token_amount', token_amounts) as token_amount:
             administrator_ledger_key = LedgerKey.make(token_amount.token_id, sp.sender)
             sp.verify(self.data.administrators.get(administrator_ledger_key, sp.nat(0))==AdministratorState.IS_ADMIN, message = AdministrableErrorMessage.NOT_ADMIN)
             sp.verify(self.data.ledger[administrator_ledger_key]>=token_amount.amount, message = FA2ErrorMessage.INSUFFICIENT_BALANCE)
             self.data.ledger[administrator_ledger_key] = sp.as_nat(self.data.ledger.get(administrator_ledger_key, 0) - token_amount.amount)
             self.data.total_supply[token_amount.token_id] = sp.as_nat(self.data.total_supply.get(token_amount.token_id, 0) - token_amount.amount)
             
-            sp.if self.data.ledger[administrator_ledger_key] == 0:
+            with sp.if_(self.data.ledger[administrator_ledger_key] == 0):
                 del self.data.ledger[administrator_ledger_key]
     
     @sp.entry_point
     def reassign(self, reassignments):
         """Allows to reassing tokens on the calling admin's address, only a token administrator can do this"""
         sp.set_type(reassignments, Reassignment.get_batch_type())
-        sp.for reassignment in reassignments:
+        with sp.for_('reassignment', reassignments) as reassignment:
             administrator_ledger_key = LedgerKey.make(reassignment.token_id, sp.sender)
             sp.verify(self.data.administrators.get(administrator_ledger_key, sp.nat(0))==AdministratorState.IS_ADMIN, message = AdministrableErrorMessage.NOT_ADMIN)
             sp.verify(reassignment.original_holder != reassignment.replacement_holder, message = CMTAFA2ErrorMessage.SAME_REASSIGN)
@@ -402,10 +423,10 @@ class CMTAFA2(AdministrableFA2):
     def destroy(self, destructions):
         """Allows to destroy tokens on the calling admin's address, only a token administrator can do this"""
         sp.set_type(destructions, Destruction.get_batch_type())
-        sp.for destruction in destructions:
+        with sp.for_('destruction', destructions) as destruction:
             administrator_ledger_key = LedgerKey.make(destruction.token_id, sp.sender)
             sp.verify(self.data.administrators.get(administrator_ledger_key, sp.nat(0))==AdministratorState.IS_ADMIN, message = AdministrableErrorMessage.NOT_ADMIN)
-            sp.for holder in destruction.holders:
+            with sp.for_('holder', destruction.holders) as holder:
                 holder_ledger_key = LedgerKey.make(destruction.token_id, holder)
                 sp.verify(self.data.ledger[holder_ledger_key]>sp.nat(0), message = FA2ErrorMessage.INSUFFICIENT_BALANCE)
                 self.data.ledger[administrator_ledger_key] = self.data.ledger[holder_ledger_key]
@@ -415,7 +436,7 @@ class CMTAFA2(AdministrableFA2):
     def pause(self, token_ids):
         """Allows to pause tokens, only a token administrator can do this"""
         sp.set_type(token_ids, sp.TList(sp.TNat))
-        sp.for token_id in token_ids:
+        with sp.for_('token_id', token_ids) as token_id:
             administrator_ledger_key = LedgerKey.make(token_id, sp.sender)
             sp.verify(self.data.administrators.get(administrator_ledger_key, sp.nat(0))==AdministratorState.IS_ADMIN, message = AdministrableErrorMessage.NOT_ADMIN)
             token_context = self.data.token_context[token_id]
@@ -426,7 +447,7 @@ class CMTAFA2(AdministrableFA2):
     def unpause(self, token_ids):
         """Allows to unpause tokens, only a token administrator can do this"""
         sp.set_type(token_ids, sp.TList(sp.TNat))
-        sp.for token_id in token_ids:
+        with sp.for_('token_id', token_ids) as token_id:
             administrator_ledger_key = LedgerKey.make(token_id, sp.sender)
             sp.verify(self.data.administrators.get(administrator_ledger_key, sp.nat(0))==AdministratorState.IS_ADMIN, message = AdministrableErrorMessage.NOT_ADMIN)
             token_context = self.data.token_context[token_id]
@@ -437,10 +458,24 @@ class CMTAFA2(AdministrableFA2):
     def set_rules(self, rules):
         """Allows to specify the rules contract for a specific token, only a token administrator can do this"""
         sp.set_type(rules, Rule.get_batch_type())
-        sp.for rule in rules:
+        with sp.for_('rule', rules) as rule:
             administrator_ledger_key = LedgerKey.make(rule.token_id, sp.sender)
             sp.verify(self.data.administrators.get(administrator_ledger_key, sp.nat(0))==AdministratorState.IS_ADMIN, message = AdministrableErrorMessage.NOT_ADMIN)
             self.data.token_context[rule.token_id].can_transfer_rule_contract = rule.rule_contract
+    
+    @sp.entry_point
+    def schedule_snapshot(self, token_id, snapshot_timestamp):
+        administrator_ledger_key = LedgerKey.make(token_id, sp.sender)
+        sp.verify(self.data.administrators.get(administrator_ledger_key, sp.nat(0))==AdministratorState.IS_ADMIN, message = AdministrableErrorMessage.NOT_ADMIN)
+        sp.verify(sp.now < snapshot_timestamp, message=CMTAFA2ErrorMessage.SNAPSHOT_IN_PAST)
+        self.data.token_context[token_id].next_snapshot = sp.some(snapshot_timestamp)
+
+    @sp.entry_point
+    def unschedule_snapshot(self, token_id):
+        administrator_ledger_key = LedgerKey.make(token_id, sp.sender)
+        sp.verify(self.data.administrators.get(administrator_ledger_key, sp.nat(0))==AdministratorState.IS_ADMIN, message = AdministrableErrorMessage.NOT_ADMIN)
+        self.data.token_context[token_id].next_snapshot = sp.none
+
     # Owner entrypoints
     # --- END ---
     
@@ -453,28 +488,65 @@ class CMTAFA2(AdministrableFA2):
     
     @sp.entry_point
     def transfer(self, transfers):
-        """Sligthly adapted FA2 transfer method which includes pause and rule engine functionality"""
+        """Sligthly adapted FA2 transfer method which includes pause, rule engine and snapshot functionality"""
         sp.set_type(transfers, Transfer.get_batch_type())
-        sp.for transfer in  transfers:
-           sp.for tx in transfer.txs:
-                token_context = self.data.token_context[tx.token_id]
-                can_transfer_contract = sp.contract(Transfer.get_type(), token_context.can_transfer_rule_contract, entry_point="can_transfer")
-                sp.if can_transfer_contract.is_some():
+        with sp.for_('transfer',  transfers) as transfer:
+           with sp.for_('tx', transfer.txs) as tx:
+                from_user = LedgerKey.make(tx.token_id, transfer.from_)
+                to_user = LedgerKey.make(tx.token_id, tx.to_)
+                operator_key = OperatorKey.make(tx.token_id, transfer.from_, sp.sender)
+                token_context = sp.local("token_context", self.data.token_context[tx.token_id])
+                can_transfer_contract = sp.contract(Transfer.get_type(), token_context.value.can_transfer_rule_contract, entry_point="can_transfer")
+                with sp.if_(can_transfer_contract.is_some()):
                     sp.transfer(transfer, sp.mutez(0), can_transfer_contract.open_some())
-                sp.verify((transfer.from_ == sp.sender), message = FA2ErrorMessage.NOT_OWNER)
+                sp.verify(((transfer.from_ == sp.sender) | self.data.operators.get(operator_key, False)), message = FA2ErrorMessage.NOT_OWNER) # allows of meta transfers
                 sp.verify(self.data.token_metadata.contains(tx.token_id), message = FA2ErrorMessage.TOKEN_UNDEFINED)
-                sp.verify(~token_context.is_paused, message = CMTAFA2ErrorMessage.TOKEN_PAUSED)
-                token_context
-                # TODO rule
-                sp.if (tx.amount > sp.nat(0)):
-                    from_user = LedgerKey.make(tx.token_id, transfer.from_)
-                    to_user = LedgerKey.make(tx.token_id, tx.to_)
+                sp.verify(~token_context.value.is_paused, message = CMTAFA2ErrorMessage.TOKEN_PAUSED)
+                with sp.if_((tx.amount > sp.nat(0))):                    
+                    
                     sp.verify((self.data.ledger[from_user] >= tx.amount), message = FA2ErrorMessage.INSUFFICIENT_BALANCE)
+                    
+                    with sp.if_(token_context.value.next_snapshot.is_some()):
+                        with sp.if_(token_context.value.next_snapshot.open_some() < sp.now):
+                            with sp.if_(token_context.value.current_snapshot.is_some()):
+                                snapshot_lookup_key = SnapshotLookupKey.make(tx.token_id, token_context.value.current_snapshot.open_some())
+                                self.data.snapshot_lookup[snapshot_lookup_key] = token_context.value.next_snapshot.open_some()
+                            token_context.value.current_snapshot = token_context.value.next_snapshot
+                            self.data.token_context[tx.token_id] = token_context.value
+                    
+                    with sp.if_(token_context.value.current_snapshot.is_some()):
+                        from_snapshot_ledger_key = SnapshotLedgerKey.make(tx.token_id, transfer.from_, token_context.value.current_snapshot.open_some())
+                        to_snapshot_ledger_key = SnapshotLedgerKey.make(tx.token_id, tx.to_, token_context.value.current_snapshot.open_some())
+                        with sp.if_(~self.data.snapshot_ledger.contains(from_snapshot_ledger_key)):
+                            self.data.snapshot_ledger[from_snapshot_ledger_key] = self.data.ledger[from_user]
+                        with sp.if_(~self.data.snapshot_ledger.contains(to_snapshot_ledger_key)):
+                            self.data.snapshot_ledger[to_snapshot_ledger_key] = self.data.ledger.get(to_user, 0)
+                    
                     self.data.ledger[from_user] = sp.as_nat(self.data.ledger[from_user] - tx.amount)
                     self.data.ledger[to_user] = self.data.ledger.get(to_user, 0) + tx.amount
-
-                    sp.if self.data.ledger[from_user] == 0:
+                                            
+                    with sp.if_(self.data.ledger[from_user] == 0):
                         del self.data.ledger[from_user]
+    
+    @sp.onchain_view()
+    def view_snapshot_balance_of(self, snapshot_ledger_key):
+        sp.set_type(snapshot_ledger_key, SnapshotLedgerKey.get_type())
+        with sp.if_(self.data.snapshot_ledger.contains(snapshot_ledger_key)):
+            sp.result(self.data.snapshot_ledger[snapshot_ledger_key])
+        with sp.else_():
+            current_snapshot = sp.local("current_snapshot", SnapshotLookupKey.make(snapshot_ledger_key.token_id, snapshot_ledger_key.snapshot_timestamp))    
+            current_snapshot_ledger_key = sp.local("current_snapshot_ledger_key", SnapshotLedgerKey.make(snapshot_ledger_key.token_id, snapshot_ledger_key.owner, current_snapshot.value.snapshot_timestamp))
+            with sp.if_(self.data.snapshot_lookup.contains(current_snapshot.value)):
+                with sp.while_(self.data.snapshot_lookup.contains(current_snapshot.value)):
+                    current_snapshot.value = SnapshotLookupKey.make(snapshot_ledger_key.token_id, self.data.snapshot_lookup[current_snapshot.value])
+                    current_snapshot_ledger_key.value = SnapshotLedgerKey.make(snapshot_ledger_key.token_id, snapshot_ledger_key.owner, current_snapshot.value.snapshot_timestamp)
+                with sp.if_(self.data.snapshot_ledger.contains(current_snapshot_ledger_key.value)):
+                    sp.result(self.data.snapshot_ledger[current_snapshot_ledger_key.value])
+                with sp.else_():
+                    sp.result(self.data.ledger[LedgerKey.make(snapshot_ledger_key.token_id, snapshot_ledger_key.owner)])
+            with sp.else_():
+                sp.result(self.data.ledger[LedgerKey.make(snapshot_ledger_key.token_id, snapshot_ledger_key.owner)])
+
 
 
 class AllowListRuleEngine(sp.Contract):
@@ -489,276 +561,6 @@ class AllowListRuleEngine(sp.Contract):
     @sp.entry_point
     def can_transfer(self, transfer):
         sp.set_type(transfer, Transfer.get_type())
-        sp.for tx in transfer.txs:
+        with sp.for_('tx', transfer.txs) as tx:
             sp.verify(self.data.allow_list.contains(transfer.from_), message=CMTAFA2ErrorMessage.CANNOT_TRANSFER)
             sp.verify(self.data.allow_list.contains(tx.to_), message=CMTAFA2ErrorMessage.CANNOT_TRANSFER)
-        
-@sp.add_test(name="CMTA20 Blueprint")
-def test():
-    scenario = sp.test_scenario()
-    scenario.h1("CMTAFA2 - A blueprint CMTAFA2 implementation")
-    scenario.table_of_contents()
-
-    administrator = sp.test_account("Adiministrator")
-    alice = sp.test_account("Alice")
-    bob = sp.test_account("Robert")
-    dan = sp.test_account("Dan")
-
-
-    scenario.h2("Accounts")
-    scenario.show([administrator, alice, bob, dan])
-    cmta_fa2_contract = CMTAFA2({administrator.address:True})
-    scenario += cmta_fa2_contract
-    
-    scenario.h2("Admin Calls")
-    scenario.h3("Initialise 3 tokens")
-    token_metadata_list = [sp.record(token_id=sp.nat(0), token_metadata=sp.map()),sp.record(token_id=sp.nat(1), token_metadata=sp.map()),sp.record(token_id=sp.nat(2), token_metadata=sp.map())]
-    scenario += cmta_fa2_contract.set_token_metadata(token_metadata_list).run(sender=administrator)
-    scenario += cmta_fa2_contract.initialise_token([sp.nat(0),sp.nat(1),sp.nat(2)]).run(sender=administrator)
-    
-    
-    scenario.h2("Owner Only Calls")
-    scenario.h3("Transferring the Ownership to the individual owners")
-    ownerships = [sp.record(token_id=sp.nat(0), owner=alice.address),sp.record(token_id=sp.nat(1), proposed_administrator=bob.address),sp.record(token_id=sp.nat(2), owner=dan.address)]
-    
-    scenario.p("Not admin trying to propose new owner")
-    scenario += cmta_fa2_contract.propose_administrator(sp.record(token_id=sp.nat(0), proposed_administrator=alice.address)).run(sender=alice, valid=False)
-    
-    scenario.p("Not admin trying to transfer directly")
-    scenario += cmta_fa2_contract.set_administrator(sp.nat(0)).run(sender=bob, valid=False)
-    
-    scenario.p("Correct admin trying to transfer directly")
-    scenario += cmta_fa2_contract.set_administrator(sp.nat(0)).run(sender=administrator, valid=False)
-    
-    scenario.p("Correct admin trying to propose transfer")
-    scenario += cmta_fa2_contract.propose_administrator(sp.record(token_id=sp.nat(0), proposed_administrator=alice.address)).run(sender=administrator, valid=True)
-    scenario += cmta_fa2_contract.propose_administrator(sp.record(token_id=sp.nat(1), proposed_administrator=bob.address)).run(sender=administrator, valid=True)
-    scenario += cmta_fa2_contract.propose_administrator(sp.record(token_id=sp.nat(2), proposed_administrator=dan.address)).run(sender=administrator, valid=True)
-    
-    scenario.p("Correct admin (but not proposed) trying to transfer")
-    scenario += cmta_fa2_contract.set_administrator(sp.nat(0)).run(sender=administrator, valid=False)    
-    
-    scenario.p("Proposed admin trying to transfer")
-    scenario += cmta_fa2_contract.set_administrator(sp.nat(0)).run(sender=alice, valid=True)
-    scenario += cmta_fa2_contract.set_administrator(sp.nat(1)).run(sender=bob, valid=True)
-    scenario += cmta_fa2_contract.set_administrator(sp.nat(2)).run(sender=dan, valid=True)
-    
-    scenario.p("Non Admin deletes rights")
-    scenario += cmta_fa2_contract.remove_administrator(sp.record(token_id=sp.nat(0), administrator_to_remove=administrator.address)).run(sender=dan, valid=False)
-    scenario += cmta_fa2_contract.remove_administrator(sp.record(token_id=sp.nat(1), administrator_to_remove=administrator.address)).run(sender=alice, valid=False)
-    scenario += cmta_fa2_contract.remove_administrator(sp.record(token_id=sp.nat(2), administrator_to_remove=administrator.address)).run(sender=bob, valid=False)
-    
-    scenario.p("Admin deletes own rights")
-    scenario += cmta_fa2_contract.remove_administrator(sp.record(token_id=sp.nat(0), administrator_to_remove=administrator.address)).run(sender=alice, valid=True)
-    scenario += cmta_fa2_contract.remove_administrator(sp.record(token_id=sp.nat(1), administrator_to_remove=administrator.address)).run(sender=bob, valid=True)
-    scenario += cmta_fa2_contract.remove_administrator(sp.record(token_id=sp.nat(2), administrator_to_remove=administrator.address)).run(sender=dan, valid=True)
-   
-    scenario.h3("Setting the Contact")
-    scenario.p("Correct admin but not owner trying to set contact")
-    scenario += cmta_fa2_contract.set_contacts([sp.record(token_id=sp.nat(0), contact=sp.bytes_of_string("contact@papers.ch"))]).run(sender=administrator, valid=False)
-    
-    scenario.p("Incorrect owner trying to set contact (Alice is owner of 0 not 1)")
-    scenario += cmta_fa2_contract.set_contacts([sp.record(token_id=sp.nat(1), contact=sp.bytes_of_string("contact@papers.ch"))]).run(sender=alice, valid=False)
-    
-    scenario.p("Correct owner trying to batch set contact (Alice is owner of 0 not 1 and 2)")
-    scenario += cmta_fa2_contract.set_contacts([sp.record(token_id=sp.nat(0), contact=sp.bytes_of_string("alice@papers.ch")), sp.record(token_id=sp.nat(1), contact=sp.bytes_of_string("bob@papers.ch")), sp.record(token_id=sp.nat(2), contact=sp.bytes_of_string("dan@papers.ch"))]).run(sender=alice, valid=False)
-    
-    scenario.p("Correct owners setting contacts")
-    scenario += cmta_fa2_contract.set_contacts([sp.record(token_id=sp.nat(0), contact=sp.bytes_of_string("alice@papers.ch"))]).run(sender=alice, valid=True)
-    scenario += cmta_fa2_contract.set_contacts([sp.record(token_id=sp.nat(1), contact=sp.bytes_of_string("bob@papers.ch"))]).run(sender=bob, valid=True)
-    scenario += cmta_fa2_contract.set_contacts([sp.record(token_id=sp.nat(2), contact=sp.bytes_of_string("dan@papers.ch"))]).run(sender=dan, valid=True)
-    
-    
-    scenario.h3("Issuing")
-    scenario.p("Correct admin but not owner trying to issue")
-    scenario += cmta_fa2_contract.issue([sp.record(token_id=sp.nat(0), amount=sp.nat(100))]).run(sender=administrator, valid=False)
-    
-    scenario.p("Incorrect owner trying to issue (Alice is owner of 0 not 1)")
-    scenario += cmta_fa2_contract.issue([sp.record(token_id=sp.nat(1), amount=sp.nat(100))]).run(sender=alice, valid=False)
-    
-    scenario.p("Correct owner trying to batch issue (Alice is owner of 0 not 1 and 2)")
-    scenario += cmta_fa2_contract.issue([sp.record(token_id=sp.nat(0), amount=sp.nat(100)), sp.record(token_id=sp.nat(1), amount=sp.nat(100)), sp.record(token_id=sp.nat(2), amount=sp.nat(100))]).run(sender=alice, valid=False)
-    
-    scenario.p("Correct owners issuing tokens")
-    scenario += cmta_fa2_contract.issue([sp.record(token_id=sp.nat(0), amount=sp.nat(100))]).run(sender=alice, valid=True)
-    scenario += cmta_fa2_contract.issue([sp.record(token_id=sp.nat(1), amount=sp.nat(100))]).run(sender=bob, valid=True)
-    scenario += cmta_fa2_contract.issue([sp.record(token_id=sp.nat(2), amount=sp.nat(100))]).run(sender=dan, valid=True)
-    
-    scenario.p("Correct owners issuing additional amounts of tokens")
-    scenario += cmta_fa2_contract.issue([sp.record(token_id=sp.nat(0), amount=sp.nat(101))]).run(sender=alice, valid=True)
-    scenario += cmta_fa2_contract.issue([sp.record(token_id=sp.nat(1), amount=sp.nat(101))]).run(sender=bob, valid=True)
-    scenario += cmta_fa2_contract.issue([sp.record(token_id=sp.nat(2), amount=sp.nat(101))]).run(sender=dan, valid=True)
-    scenario.verify(cmta_fa2_contract.data.ledger[LedgerKey.make(0, alice.address)] == 201)
-    scenario.verify(cmta_fa2_contract.data.ledger[LedgerKey.make(1, bob.address)] == 201)
-    scenario.verify(cmta_fa2_contract.data.ledger[LedgerKey.make(2, dan.address)] == 201)
-    
-    scenario.h3("Redemption")
-    scenario.p("Correct admin but not owner trying to redeem")
-    scenario += cmta_fa2_contract.redeem([sp.record(token_id=sp.nat(0), amount=sp.nat(100))]).run(sender=administrator, valid=False)
-    
-    scenario.p("Incorrect owner trying to redeem (Alice is owner of 0 not 1)")
-    scenario += cmta_fa2_contract.redeem([sp.record(token_id=sp.nat(1), amount=sp.nat(100))]).run(sender=alice, valid=False)
-    
-    scenario.p("Correct owner trying to batch redeem (Alice is owner of 0 not 1 and 2)")
-    scenario += cmta_fa2_contract.redeem([sp.record(token_id=sp.nat(0), amount=sp.nat(100)), sp.record(token_id=sp.nat(1), amount=sp.nat(100)), sp.record(token_id=sp.nat(1), amount=sp.nat(100))]).run(sender=alice, valid=False)
-    
-    scenario.p("Correct owners redeeming tokens")
-    scenario += cmta_fa2_contract.redeem([sp.record(token_id=sp.nat(0), amount=sp.nat(100))]).run(sender=alice, valid=True)
-    scenario += cmta_fa2_contract.redeem([sp.record(token_id=sp.nat(1), amount=sp.nat(100))]).run(sender=bob, valid=True)
-    scenario += cmta_fa2_contract.redeem([sp.record(token_id=sp.nat(2), amount=sp.nat(100))]).run(sender=dan, valid=True)
-    scenario.verify(cmta_fa2_contract.data.ledger[LedgerKey.make(0, alice.address)] == 101)
-    scenario.verify(cmta_fa2_contract.data.ledger[LedgerKey.make(1, bob.address)] == 101)
-    scenario.verify(cmta_fa2_contract.data.ledger[LedgerKey.make(2, dan.address)] == 101)
-    
-    scenario.p("Cannot redeem more than owner has")
-    scenario += cmta_fa2_contract.redeem([sp.record(token_id=sp.nat(0), amount=sp.nat(201))]).run(sender=alice, valid=False)
-    scenario += cmta_fa2_contract.redeem([sp.record(token_id=sp.nat(1), amount=sp.nat(201))]).run(sender=bob, valid=False)
-    scenario += cmta_fa2_contract.redeem([sp.record(token_id=sp.nat(2), amount=sp.nat(201))]).run(sender=dan, valid=False)
-    
-    scenario.p("Correct owners redeeming additional amounts of tokens")
-    scenario += cmta_fa2_contract.redeem([sp.record(token_id=sp.nat(0), amount=sp.nat(101))]).run(sender=alice, valid=True)
-    scenario += cmta_fa2_contract.redeem([sp.record(token_id=sp.nat(1), amount=sp.nat(101))]).run(sender=bob, valid=True)
-    scenario += cmta_fa2_contract.redeem([sp.record(token_id=sp.nat(2), amount=sp.nat(101))]).run(sender=dan, valid=True)
-    scenario.verify(~cmta_fa2_contract.data.ledger.contains(LedgerKey.make(0, alice.address)))
-    scenario.verify(~cmta_fa2_contract.data.ledger.contains(LedgerKey.make(1, bob.address)))
-    scenario.verify(~cmta_fa2_contract.data.ledger.contains(LedgerKey.make(2, dan.address)))
-    
-
-    
-    scenario.h3("Reassign")
-    scenario.p("Bootstrapping by issuing some tokens")
-    scenario += cmta_fa2_contract.issue([sp.record(token_id=sp.nat(0), amount=sp.nat(50))]).run(sender=alice, valid=True)
-    scenario += cmta_fa2_contract.issue([sp.record(token_id=sp.nat(1), amount=sp.nat(47))]).run(sender=bob, valid=True)
-    scenario += cmta_fa2_contract.issue([sp.record(token_id=sp.nat(2), amount=sp.nat(39))]).run(sender=dan, valid=True)
-    
-    scenario.p("Correct admin but not owner trying to reassign")
-    scenario += cmta_fa2_contract.reassign([sp.record(token_id=sp.nat(0), original_holder=alice.address, replacement_holder=alice.address)]).run(sender=administrator, valid=False)
-    
-    scenario.p("Incorrect owner trying to reassign (Alice is owner of 0 not 1)")
-    scenario += cmta_fa2_contract.reassign([sp.record(token_id=sp.nat(1), original_holder=alice.address,replacement_holder=alice.address)]).run(sender=alice, valid=False)
-    
-    scenario.p("Correct owner trying to batch reassign (Alice is owner of 0 not 1 and 2)")
-    scenario += cmta_fa2_contract.reassign([sp.record(token_id=sp.nat(0), original_holder=alice.address,replacement_holder=alice.address), sp.record(token_id=sp.nat(1), original_holder=bob.address, replacement_holder=alice.address), sp.record(token_id=sp.nat(2), original_holder=dan.address, replacement_holder=alice.address)]).run(sender=alice, valid=False)
-    
-    scenario.p("Correct owner reassigning to self")
-    scenario += cmta_fa2_contract.reassign([sp.record(token_id=sp.nat(0), original_holder=alice.address, replacement_holder=alice.address)]).run(sender=alice, valid=False)
-    
-    scenario.p("Correct owners reassigning tokens")
-    scenario += cmta_fa2_contract.reassign([sp.record(token_id=sp.nat(1), original_holder=bob.address, replacement_holder=alice.address)]).run(sender=bob, valid=True)
-    scenario += cmta_fa2_contract.reassign([sp.record(token_id=sp.nat(2), original_holder=dan.address, replacement_holder=alice.address)]).run(sender=dan, valid=True)
-
-    scenario.verify(cmta_fa2_contract.data.ledger[LedgerKey.make(0, alice.address)] == 50)
-    scenario.verify(cmta_fa2_contract.data.ledger[LedgerKey.make(1, alice.address)] == 47)
-    scenario.verify(cmta_fa2_contract.data.ledger[LedgerKey.make(2, alice.address)] == 39)
-    
-    scenario.p("Correct owner reassigning non existings balances")
-    scenario += cmta_fa2_contract.reassign([sp.record(token_id=sp.nat(1), original_holder=dan.address, replacement_holder=alice.address)]).run(sender=bob, valid=False)
-    
-    scenario.p("Can now only redeem if token on owner address")
-    scenario += cmta_fa2_contract.redeem([sp.record(token_id=sp.nat(1), amount=sp.nat(1))]).run(sender=bob, valid=False)
-    scenario += cmta_fa2_contract.redeem([sp.record(token_id=sp.nat(2), amount=sp.nat(1))]).run(sender=dan, valid=False)
-
-    
-    scenario.h3("Destroy")
-    scenario.p("Correct admin but not owner trying to destroy")
-    scenario += cmta_fa2_contract.destroy([sp.record(token_id=sp.nat(0), holders=[alice.address, bob.address, dan.address])]).run(sender=administrator, valid=False)
-    
-    scenario.p("Incorrect owner trying to destroy (Alice is owner of 0 not 1)")
-    scenario += cmta_fa2_contract.destroy([sp.record(token_id=sp.nat(1), holders=[alice.address, bob.address, dan.address])]).run(sender=alice, valid=False)
-    
-    scenario.p("Correct owner trying to batch destroy (Alice is owner of 0 not 1 and 2)")
-    scenario += cmta_fa2_contract.destroy([sp.record(token_id=sp.nat(0), holders=[alice.address, bob.address, dan.address]), sp.record(token_id=sp.nat(1), holders=[alice.address, bob.address, dan.address]), sp.record(token_id=sp.nat(2), holders=[alice.address, bob.address, dan.address])]).run(sender=alice, valid=False)
-    
-    scenario.p("Correct owners destroying tokens")
-    scenario += cmta_fa2_contract.destroy([sp.record(token_id=sp.nat(1), holders=[alice.address])]).run(sender=bob, valid=True)
-    scenario += cmta_fa2_contract.destroy([sp.record(token_id=sp.nat(2), holders=[alice.address])]).run(sender=dan, valid=True)
-
-    scenario.verify(cmta_fa2_contract.data.ledger[LedgerKey.make(0, alice.address)] == 50)
-    scenario.verify(cmta_fa2_contract.data.ledger[LedgerKey.make(1, bob.address)] == 47)
-    scenario.verify(cmta_fa2_contract.data.ledger[LedgerKey.make(2, dan.address)] == 39)
-    
-    scenario.p("Correct owner destroying non existings balances")
-    scenario += cmta_fa2_contract.destroy([sp.record(token_id=sp.nat(1), holders=[alice.address, bob.address, dan.address])]).run(sender=bob, valid=False)
-    
-    scenario.h3("Pause")
-    scenario.p("Correct admin but not owner trying to pause")
-    scenario += cmta_fa2_contract.pause([sp.nat(0)]).run(sender=administrator, valid=False)
-    
-    scenario.p("Incorrect owner trying to pause (Alice is owner of 0 not 1)")
-    scenario += cmta_fa2_contract.pause([sp.nat(1)]).run(sender=alice, valid=False)
-    
-    scenario.p("Correct owner trying to batch pause (Alice is owner of 0 not 1 and 2)")
-    scenario += cmta_fa2_contract.pause([sp.nat(0), sp.nat(1), sp.nat(2)]).run(sender=alice, valid=False)
-    
-    scenario.p("Correct owners pauseing tokens")
-    scenario += cmta_fa2_contract.pause([sp.nat(1)]).run(sender=bob, valid=True)
-    scenario += cmta_fa2_contract.pause([sp.nat(2)]).run(sender=dan, valid=True)
-    
-    
-    scenario.h3("Unpause")
-    scenario.p("Correct admin but not owner trying to unpause")
-    scenario += cmta_fa2_contract.unpause([sp.nat(0)]).run(sender=administrator, valid=False)
-    
-    scenario.p("Incorrect owner trying to unpause (Alice is owner of 0 not 1)")
-    scenario += cmta_fa2_contract.unpause([sp.nat(1)]).run(sender=alice, valid=False)
-    
-    scenario.p("Correct owner trying to batch unpause (Alice is owner of 0 not 1 and 2)")
-    scenario += cmta_fa2_contract.unpause([sp.nat(0), sp.nat(1), sp.nat(2)]).run(sender=alice, valid=False)
-    
-    scenario.p("Correct owners unpauseing tokens")
-    scenario += cmta_fa2_contract.unpause([sp.nat(1)]).run(sender=bob, valid=True)
-    scenario += cmta_fa2_contract.unpause([sp.nat(2)]).run(sender=dan, valid=True)
-    
-    scenario.h2("Token Holder Calls")
-    scenario.h3("Transfer")
-    scenario.p("Holder with no balance tries transfer")
-    scenario += cmta_fa2_contract.transfer([sp.record(from_=bob.address, txs=[sp.record(to_=dan.address, token_id=sp.nat(0), amount=sp.nat(1))])]).run(sender=bob, valid=False)
-    
-    scenario.p("Admin with no balance tries transfer")
-    scenario += cmta_fa2_contract.transfer([sp.record(from_=administrator.address, txs=[sp.record(to_=dan.address, token_id=sp.nat(0), amount=sp.nat(1))])]).run(sender=administrator, valid=False)
-    
-    scenario.p("Admin tries transfer of third parties balance")
-    scenario += cmta_fa2_contract.transfer([sp.record(from_=alice.address, txs=[sp.record(to_=dan.address, token_id=sp.nat(0), amount=sp.nat(1))])]).run(sender=administrator, valid=False)
-    
-    scenario.p("Owner performs initial transfer of own balance")
-    scenario += cmta_fa2_contract.transfer([sp.record(from_=alice.address, txs=[sp.record(to_=dan.address, token_id=sp.nat(0), amount=sp.nat(10))])]).run(sender=alice, valid=True)
-    
-    scenario.p("Owner tries transfer of third party balance")
-    scenario += cmta_fa2_contract.transfer([sp.record(from_=dan.address, txs=[sp.record(to_=bob.address, token_id=sp.nat(0), amount=sp.nat(1))])]).run(sender=alice, valid=False)
-    
-    scenario.p("Holder transfers own balance")
-    scenario += cmta_fa2_contract.transfer([sp.record(from_=dan.address, txs=[sp.record(to_=bob.address, token_id=sp.nat(0), amount=sp.nat(1))])]).run(sender=dan, valid=True)
-    
-    scenario.p("Holder transfers too much")
-    scenario += cmta_fa2_contract.transfer([sp.record(from_=dan.address, txs=[sp.record(to_=bob.address, token_id=sp.nat(0), amount=sp.nat(11))])]).run(sender=dan, valid=False)
-    
-    scenario.h3("Pause/Unpause")
-    scenario.p("Holder transfers too much")
-    scenario += cmta_fa2_contract.transfer([sp.record(from_=dan.address, txs=[sp.record(to_=bob.address, token_id=sp.nat(0), amount=sp.nat(11))])]).run(sender=dan, valid=False)
-    
-    scenario.p("Holder transfers paused token")
-    scenario += cmta_fa2_contract.pause([sp.nat(0)]).run(sender=alice, valid=True)
-    scenario += cmta_fa2_contract.pause([sp.nat(1)]).run(sender=bob, valid=True)
-    scenario += cmta_fa2_contract.transfer([sp.record(from_=dan.address, txs=[sp.record(to_=bob.address, token_id=sp.nat(0), amount=sp.nat(1))])]).run(sender=dan, valid=False)
-    
-    scenario.p("Holder transfers resumed token")
-    scenario += cmta_fa2_contract.unpause([sp.nat(0)]).run(sender=alice, valid=True)
-    scenario += cmta_fa2_contract.transfer([sp.record(from_=dan.address, txs=[sp.record(to_=bob.address, token_id=sp.nat(0), amount=sp.nat(1))])]).run(sender=dan, valid=True)
-    
-    scenario.h3("Identities")
-    scenario.p("Holder discloses own identity")
-    scenario += cmta_fa2_contract.set_identity(sp.bytes("0x11")).run(sender=alice, valid=True)
-    scenario += cmta_fa2_contract.set_identity(sp.bytes("0x12")).run(sender=bob, valid=True)
-    scenario += cmta_fa2_contract.set_identity(sp.bytes("0x13")).run(sender=dan, valid=True)
-    
-    scenario.h3("Rule Engine")
-    allow_list_rule_engine_contract = AllowListRuleEngine()
-    scenario += allow_list_rule_engine_contract
-    scenario += allow_list_rule_engine_contract.add(alice.address)
-    scenario += cmta_fa2_contract.set_rules([sp.record(token_id=sp.nat(0), rule_contract=allow_list_rule_engine_contract.address)]).run(sender=alice, valid=True)
-    # scenario += cmta_fa2_contract.transfer([sp.record(from_=alice.address, txs=[sp.record(to_=dan.address, token_id=sp.nat(0), amount=sp.nat(1))])]).run(sender=alice, valid=False)
-    scenario += allow_list_rule_engine_contract.add(dan.address)
-    scenario += cmta_fa2_contract.transfer([sp.record(from_=alice.address, txs=[sp.record(to_=dan.address, token_id=sp.nat(0), amount=sp.nat(1))])]).run(sender=alice, valid=True)
-    
-    
- 
