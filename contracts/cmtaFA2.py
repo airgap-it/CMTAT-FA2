@@ -378,6 +378,7 @@ class CMTAFA2(AdministrableFA2):
                 snapshot_lookup_key = SnapshotLookupKey.make(token_amount.token_id, token_context.value.next_snapshot.open_some())
                 with sp.if_((token_context.value.next_snapshot.open_some() < sp.now) & ~self.data.snapshot_total_supply.contains(snapshot_lookup_key)):                    
                     self.data.snapshot_total_supply[snapshot_lookup_key] = self.data.total_supply.get(token_amount.token_id, 0)
+                    token_context.value.next_snapshot = sp.none
             
             self.data.ledger[recipient_ledger_key] = self.data.ledger.get(recipient_ledger_key, 0) + token_amount.amount
             self.data.total_supply[token_amount.token_id] = self.data.total_supply.get(token_amount.token_id, 0) + token_amount.amount
@@ -451,10 +452,9 @@ class CMTAFA2(AdministrableFA2):
     
     @sp.entry_point
     def kill(self):
-        administrator_ledger_key = LedgerKey.make(sp.nat(0), sp.sender)
-        sp.verify(self.data.administrator_allowmap.get(administrator_ledger_key, sp.nat(0))==AdministratorState.IS_ADMIN, message = AdministrableErrorMessage.NOT_ADMIN)
+        sp.verify(self.data.administrator_allowmap.contains(sp.sender), message = AdministrableErrorMessage.NOT_ADMIN)
         self.data.ledger = sp.big_map(tkey=LedgerKey.get_type(), tvalue=sp.TNat)
-        self.data.administrator_allowmap = sp.set_type_expr(self.administrator_allowmap, sp.TMap(sp.TAddress, sp.TBool))
+        self.data.administrator_allowmap = sp.map(tkey=sp.TAddress, tvalue=sp.TUnit)
         self.data.administrators = sp.big_map(tkey=LedgerKey.get_type(), tvalue = sp.TNat)
         self.data.token_metadata = sp.big_map(tkey=sp.TNat, tvalue = TokenMetadata.get_type())
         self.data.total_supply = sp.big_map(tkey=sp.TNat, tvalue = sp.TNat)
@@ -539,7 +539,19 @@ class CMTAFA2(AdministrableFA2):
         with sp.if_(self.data.snapshot_total_supply.contains(snapshot_lookup_key)):
             sp.result(self.data.snapshot_total_supply[snapshot_lookup_key])
         with sp.else_():
-            sp.result(self.data.total_supply[snapshot_lookup_key.token_id])
+            keep_loop = sp.local("keep_loop", True)
+            current_snapshot_lookup_key = sp.local("current_snapshot_lookup_key", snapshot_lookup_key)    
+            with sp.while_(keep_loop.value):
+                with sp.if_(self.data.snapshot_lookup.contains(current_snapshot_lookup_key.value)):
+                    current_snapshot_lookup_key.value = SnapshotLookupKey.make(snapshot_lookup_key.token_id, self.data.snapshot_lookup[current_snapshot_lookup_key.value])
+                    with sp.if_(self.data.snapshot_total_supply.contains(current_snapshot_lookup_key.value)):
+                        keep_loop.value = False
+                with sp.else_():
+                    keep_loop.value = False
+            with sp.if_(self.data.snapshot_total_supply.contains(current_snapshot_lookup_key.value)):
+                sp.result(self.data.snapshot_total_supply[current_snapshot_lookup_key.value])
+            with sp.else_():
+                sp.result(self.data.total_supply[snapshot_lookup_key.token_id])
 
     @sp.onchain_view()
     def view_snapshot_balance_of(self, snapshot_ledger_key):
@@ -547,16 +559,19 @@ class CMTAFA2(AdministrableFA2):
         with sp.if_(self.data.snapshot_ledger.contains(snapshot_ledger_key)):
             sp.result(self.data.snapshot_ledger[snapshot_ledger_key])
         with sp.else_():
-            current_snapshot = sp.local("current_snapshot", SnapshotLookupKey.make(snapshot_ledger_key.token_id, snapshot_ledger_key.snapshot_timestamp))    
-            current_snapshot_ledger_key = sp.local("current_snapshot_ledger_key", SnapshotLedgerKey.make(snapshot_ledger_key.token_id, snapshot_ledger_key.owner, current_snapshot.value.snapshot_timestamp))
-            with sp.if_(self.data.snapshot_lookup.contains(current_snapshot.value)):
-                with sp.while_(self.data.snapshot_lookup.contains(current_snapshot.value)):
-                    current_snapshot.value = SnapshotLookupKey.make(snapshot_ledger_key.token_id, self.data.snapshot_lookup[current_snapshot.value])
-                    current_snapshot_ledger_key.value = SnapshotLedgerKey.make(snapshot_ledger_key.token_id, snapshot_ledger_key.owner, current_snapshot.value.snapshot_timestamp)
-                with sp.if_(self.data.snapshot_ledger.contains(current_snapshot_ledger_key.value)):
-                    sp.result(self.data.snapshot_ledger[current_snapshot_ledger_key.value])
+            keep_loop = sp.local("keep_loop", True)
+            current_snapshot_lookup_key = sp.local("current_snapshot_lookup_key", SnapshotLookupKey.make(snapshot_ledger_key.token_id, snapshot_ledger_key.snapshot_timestamp))    
+            current_snapshot_ledger_key = sp.local("current_snapshot_ledger_key", SnapshotLedgerKey.make(snapshot_ledger_key.token_id, snapshot_ledger_key.owner, current_snapshot_lookup_key.value.snapshot_timestamp))
+            with sp.while_(keep_loop.value):
+                with sp.if_(self.data.snapshot_lookup.contains(current_snapshot_lookup_key.value)):
+                    current_snapshot_lookup_key.value = SnapshotLookupKey.make(snapshot_ledger_key.token_id, self.data.snapshot_lookup[current_snapshot_lookup_key.value])
+                    current_snapshot_ledger_key.value = SnapshotLedgerKey.make(snapshot_ledger_key.token_id, snapshot_ledger_key.owner, current_snapshot_lookup_key.value.snapshot_timestamp)
+                    with sp.if_(self.data.snapshot_ledger.contains(current_snapshot_ledger_key.value)):
+                        keep_loop.value = False
                 with sp.else_():
-                    sp.result(self.data.ledger[LedgerKey.make(snapshot_ledger_key.token_id, snapshot_ledger_key.owner)])
+                    keep_loop.value = False
+            with sp.if_(self.data.snapshot_ledger.contains(current_snapshot_ledger_key.value)):
+                sp.result(self.data.snapshot_ledger[current_snapshot_ledger_key.value])
             with sp.else_():
                 sp.result(self.data.ledger[LedgerKey.make(snapshot_ledger_key.token_id, snapshot_ledger_key.owner)])
 

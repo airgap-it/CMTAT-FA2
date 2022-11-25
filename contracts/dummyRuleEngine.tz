@@ -1,0 +1,49 @@
+parameter (or (address %add) (pair %validate_transfer (address %from_) (list %txs (pair (address %to_) (pair (nat %token_id) (nat %amount))))));
+storage   (big_map address bool);
+code
+  {
+    UNPAIR;     # @parameter : @storage
+    IF_LEFT
+      {
+        SWAP;       # @storage : @parameter%add
+        # == add ==
+        # self.data.allow_list[params] = True # @storage : @parameter%add
+        PUSH (option bool) (Some True); # option bool : @storage : @parameter%add
+        DIG 2;      # @parameter%add : option bool : @storage
+        UPDATE;     # big_map address bool
+      }
+      {
+        # == validate_transfer ==
+        # for tx in params.txs: ... # @parameter%validate_transfer : @storage
+        DUP;        # @parameter%validate_transfer : @parameter%validate_transfer : @storage
+        CDR;        # list (pair (address %to_) (pair (nat %token_id) (nat %amount))) : @parameter%validate_transfer : @storage
+        ITER
+          {
+            # sp.verify(self.data.allow_list.contains(params.from_), 'CM_CANNOT_TRANSFER') # pair (address %to_) (pair (nat %token_id) (nat %amount)) : @parameter%validate_transfer : @storage
+            DUP 3;      # @storage : pair (address %to_) (pair (nat %token_id) (nat %amount)) : @parameter%validate_transfer : @storage
+            DUP 3;      # @parameter%validate_transfer : @storage : pair (address %to_) (pair (nat %token_id) (nat %amount)) : @parameter%validate_transfer : @storage
+            CAR;        # address : @storage : pair (address %to_) (pair (nat %token_id) (nat %amount)) : @parameter%validate_transfer : @storage
+            MEM;        # bool : pair (address %to_) (pair (nat %token_id) (nat %amount)) : @parameter%validate_transfer : @storage
+            IF
+              {}
+              {
+                PUSH string "CM_CANNOT_TRANSFER"; # string : pair (address %to_) (pair (nat %token_id) (nat %amount)) : @parameter%validate_transfer : @storage
+                FAILWITH;   # FAILED
+              }; # pair (address %to_) (pair (nat %token_id) (nat %amount)) : @parameter%validate_transfer : @storage
+            # sp.verify(self.data.allow_list.contains(tx.to_), 'CM_CANNOT_TRANSFER') # pair (address %to_) (pair (nat %token_id) (nat %amount)) : @parameter%validate_transfer : @storage
+            DUP 3;      # @storage : pair (address %to_) (pair (nat %token_id) (nat %amount)) : @parameter%validate_transfer : @storage
+            SWAP;       # pair (address %to_) (pair (nat %token_id) (nat %amount)) : @storage : @parameter%validate_transfer : @storage
+            CAR;        # address : @storage : @parameter%validate_transfer : @storage
+            MEM;        # bool : @parameter%validate_transfer : @storage
+            IF
+              {}
+              {
+                PUSH string "CM_CANNOT_TRANSFER"; # string : @parameter%validate_transfer : @storage
+                FAILWITH;   # FAILED
+              }; # @parameter%validate_transfer : @storage
+          }; # @parameter%validate_transfer : @storage
+        DROP;       # @storage
+      }; # big_map address bool
+    NIL operation; # list operation : big_map address bool
+    PAIR;       # pair (list operation) (big_map address bool)
+  };

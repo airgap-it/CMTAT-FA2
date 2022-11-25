@@ -1,6 +1,6 @@
 import smartpy as sp
 
-from contracts.cmtaFA2 import CMTAFA2, LedgerKey, AllowListRuleEngine, SnapshotLedgerKey
+from contracts.cmtaFA2 import CMTAFA2, LedgerKey, AllowListRuleEngine, SnapshotLedgerKey, SnapshotLookupKey
 
 @sp.add_test(name="CMTA20 Blueprint")
 def test():
@@ -16,7 +16,7 @@ def test():
 
     scenario.h2("Accounts")
     scenario.show([administrator, alice, bob, dan])
-    cmta_fa2_contract = CMTAFA2({administrator.address:True})
+    cmta_fa2_contract = CMTAFA2({administrator.address:sp.unit})
     scenario += cmta_fa2_contract
     
     scenario.h2("Admin Calls")
@@ -290,6 +290,42 @@ def test():
     scenario.verify(cmta_fa2_contract.view_snapshot_balance_of(SnapshotLedgerKey.make(token_id, dan.address, future_time))==10)
     scenario.verify(cmta_fa2_contract.view_snapshot_balance_of(SnapshotLedgerKey.make(token_id, bob.address, future_time))==5)
 
-
     scenario.p("Snapshot total Supplies")
-    #scenario.verify(cmta_fa2_contract.view_snapshot_balance_of(SnapshotLedgerKey.make(token_id, bob.address, future_time))==5)
+    scenario.verify(cmta_fa2_contract.view_snapshot_total_supply(SnapshotLookupKey.make(sp.nat(0), future_time))==50)
+    scenario.verify(cmta_fa2_contract.view_snapshot_total_supply(SnapshotLookupKey.make(sp.nat(1), future_time))==47)
+    scenario.verify(cmta_fa2_contract.view_snapshot_total_supply(SnapshotLookupKey.make(sp.nat(2), future_time))==39)
+
+    snapshot_time = sp.timestamp(9)
+    scenario += cmta_fa2_contract.schedule_snapshot(sp.record(token_id=token_id, snapshot_timestamp=snapshot_time)).run(sender=alice, valid=True, now=future_time)
+    future_time = sp.timestamp(10)
+    scenario += cmta_fa2_contract.mint([sp.record(token_id=sp.nat(0), amount=sp.nat(50), address=alice.address)]).run(sender=alice, valid=True, now=future_time)
+    scenario.p("Direct match")
+    scenario.verify(cmta_fa2_contract.view_snapshot_total_supply(SnapshotLookupKey.make(sp.nat(0), future_time))==100)
+    scenario.verify(cmta_fa2_contract.view_snapshot_total_supply(SnapshotLookupKey.make(sp.nat(0), snapshot_time))==50)
+
+
+    scenario.h3("Kill Switch")
+    scenario.p("Only allowmap Admin can kill")
+    scenario += cmta_fa2_contract.kill().run(sender=alice, valid=False)
+    scenario += cmta_fa2_contract.kill().run(sender=bob, valid=False)
+    scenario += cmta_fa2_contract.kill().run(sender=dan, valid=False)
+
+    scenario.verify(cmta_fa2_contract.data.ledger.contains(LedgerKey.make(0, alice.address)))
+    scenario.verify(cmta_fa2_contract.data.ledger.contains(LedgerKey.make(0, bob.address)))
+    scenario.verify(cmta_fa2_contract.data.ledger.contains(LedgerKey.make(0, dan.address)))
+
+    scenario.p("Admin can kill")
+    scenario += cmta_fa2_contract.kill().run(sender=administrator, valid=True)
+    scenario.verify(~cmta_fa2_contract.data.ledger.contains(LedgerKey.make(0, alice.address)))
+    scenario.verify(~cmta_fa2_contract.data.ledger.contains(LedgerKey.make(1, alice.address)))
+    scenario.verify(~cmta_fa2_contract.data.ledger.contains(LedgerKey.make(2, alice.address)))
+    scenario.verify(~cmta_fa2_contract.data.ledger.contains(LedgerKey.make(0, bob.address)))
+    scenario.verify(~cmta_fa2_contract.data.ledger.contains(LedgerKey.make(1, bob.address)))
+    scenario.verify(~cmta_fa2_contract.data.ledger.contains(LedgerKey.make(2, bob.address)))
+    scenario.verify(~cmta_fa2_contract.data.ledger.contains(LedgerKey.make(0, dan.address)))
+    scenario.verify(~cmta_fa2_contract.data.ledger.contains(LedgerKey.make(1, dan.address)))
+    scenario.verify(~cmta_fa2_contract.data.ledger.contains(LedgerKey.make(2, dan.address)))
+
+    scenario.p("Admin can only one time")
+    scenario += cmta_fa2_contract.kill().run(sender=administrator, valid=False)
+    scenario.verify(~cmta_fa2_contract.data.ledger.contains(LedgerKey.make(2, alice.address)))
