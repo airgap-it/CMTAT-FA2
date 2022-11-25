@@ -62,72 +62,57 @@ def test():
     scenario += cmta_fa2_contract.remove_administrator(sp.record(token_id=sp.nat(1), administrator_to_remove=administrator.address)).run(sender=bob, valid=True)
     scenario += cmta_fa2_contract.remove_administrator(sp.record(token_id=sp.nat(2), administrator_to_remove=administrator.address)).run(sender=dan, valid=True)
    
-    scenario.h3("Setting the Contact")
-    scenario.p("Correct admin but not owner trying to set contact")
-    scenario += cmta_fa2_contract.set_contacts([sp.record(token_id=sp.nat(0), contact=sp.utils.bytes_of_string("contact@papers.ch"))]).run(sender=administrator, valid=False)
-    
-    scenario.p("Incorrect owner trying to set contact (Alice is owner of 0 not 1)")
-    scenario += cmta_fa2_contract.set_contacts([sp.record(token_id=sp.nat(1), contact=sp.utils.bytes_of_string("contact@papers.ch"))]).run(sender=alice, valid=False)
-    
-    scenario.p("Correct owner trying to batch set contact (Alice is owner of 0 not 1 and 2)")
-    scenario += cmta_fa2_contract.set_contacts([sp.record(token_id=sp.nat(0), contact=sp.utils.bytes_of_string("alice@papers.ch")), sp.record(token_id=sp.nat(1), contact=sp.utils.bytes_of_string("bob@papers.ch")), sp.record(token_id=sp.nat(2), contact=sp.utils.bytes_of_string("dan@papers.ch"))]).run(sender=alice, valid=False)
-    
-    scenario.p("Correct owners setting contacts")
-    scenario += cmta_fa2_contract.set_contacts([sp.record(token_id=sp.nat(0), contact=sp.utils.bytes_of_string("alice@papers.ch"))]).run(sender=alice, valid=True)
-    scenario += cmta_fa2_contract.set_contacts([sp.record(token_id=sp.nat(1), contact=sp.utils.bytes_of_string("bob@papers.ch"))]).run(sender=bob, valid=True)
-    scenario += cmta_fa2_contract.set_contacts([sp.record(token_id=sp.nat(2), contact=sp.utils.bytes_of_string("dan@papers.ch"))]).run(sender=dan, valid=True)
-    
-    
+
     scenario.h3("Issuing")
-    scenario.p("Correct admin but not owner trying to issue")
-    scenario += cmta_fa2_contract.issue([sp.record(token_id=sp.nat(0), amount=sp.nat(100))]).run(sender=administrator, valid=False)
+    scenario.p("Correct admin but not owner trying to mint")
+    scenario += cmta_fa2_contract.mint([sp.record(token_id=sp.nat(0), amount=sp.nat(100), address=administrator.address)]).run(sender=administrator, valid=False)
     
-    scenario.p("Incorrect owner trying to issue (Alice is owner of 0 not 1)")
-    scenario += cmta_fa2_contract.issue([sp.record(token_id=sp.nat(1), amount=sp.nat(100))]).run(sender=alice, valid=False)
+    scenario.p("Incorrect owner trying to mint (Alice is owner of 0 not 1)")
+    scenario += cmta_fa2_contract.mint([sp.record(token_id=sp.nat(1), amount=sp.nat(100), address=alice.address)]).run(sender=alice, valid=False)
     
-    scenario.p("Correct owner trying to batch issue (Alice is owner of 0 not 1 and 2)")
-    scenario += cmta_fa2_contract.issue([sp.record(token_id=sp.nat(0), amount=sp.nat(100)), sp.record(token_id=sp.nat(1), amount=sp.nat(100)), sp.record(token_id=sp.nat(2), amount=sp.nat(100))]).run(sender=alice, valid=False)
+    scenario.p("Correct owner trying to batch mint (Alice is owner of 0 not 1 and 2)")
+    scenario += cmta_fa2_contract.mint([sp.record(token_id=sp.nat(0), amount=sp.nat(100), address=alice.address), sp.record(token_id=sp.nat(1), amount=sp.nat(100), address=alice.address), sp.record(token_id=sp.nat(2), amount=sp.nat(100), address=alice.address)]).run(sender=alice, valid=False)
     
     scenario.p("Correct owners issuing tokens")
-    scenario += cmta_fa2_contract.issue([sp.record(token_id=sp.nat(0), amount=sp.nat(100))]).run(sender=alice, valid=True)
-    scenario += cmta_fa2_contract.issue([sp.record(token_id=sp.nat(1), amount=sp.nat(100))]).run(sender=bob, valid=True)
-    scenario += cmta_fa2_contract.issue([sp.record(token_id=sp.nat(2), amount=sp.nat(100))]).run(sender=dan, valid=True)
+    scenario += cmta_fa2_contract.mint([sp.record(token_id=sp.nat(0), amount=sp.nat(100), address=alice.address)]).run(sender=alice, valid=True)
+    scenario += cmta_fa2_contract.mint([sp.record(token_id=sp.nat(1), amount=sp.nat(100), address=bob.address)]).run(sender=bob, valid=True)
+    scenario += cmta_fa2_contract.mint([sp.record(token_id=sp.nat(2), amount=sp.nat(100), address=dan.address)]).run(sender=dan, valid=True)
     
     scenario.p("Correct owners issuing additional amounts of tokens")
-    scenario += cmta_fa2_contract.issue([sp.record(token_id=sp.nat(0), amount=sp.nat(101))]).run(sender=alice, valid=True)
-    scenario += cmta_fa2_contract.issue([sp.record(token_id=sp.nat(1), amount=sp.nat(101))]).run(sender=bob, valid=True)
-    scenario += cmta_fa2_contract.issue([sp.record(token_id=sp.nat(2), amount=sp.nat(101))]).run(sender=dan, valid=True)
+    scenario += cmta_fa2_contract.mint([sp.record(token_id=sp.nat(0), amount=sp.nat(101), address=alice.address)]).run(sender=alice, valid=True)
+    scenario += cmta_fa2_contract.mint([sp.record(token_id=sp.nat(1), amount=sp.nat(101), address=bob.address)]).run(sender=bob, valid=True)
+    scenario += cmta_fa2_contract.mint([sp.record(token_id=sp.nat(2), amount=sp.nat(101), address=dan.address)]).run(sender=dan, valid=True)
     scenario.verify(cmta_fa2_contract.data.ledger[LedgerKey.make(0, alice.address)] == 201)
     scenario.verify(cmta_fa2_contract.data.ledger[LedgerKey.make(1, bob.address)] == 201)
     scenario.verify(cmta_fa2_contract.data.ledger[LedgerKey.make(2, dan.address)] == 201)
     
     scenario.h3("Redemption")
-    scenario.p("Correct admin but not owner trying to redeem")
-    scenario += cmta_fa2_contract.redeem([sp.record(token_id=sp.nat(0), amount=sp.nat(100))]).run(sender=administrator, valid=False)
+    scenario.p("Correct admin but not owner trying to burn")
+    scenario += cmta_fa2_contract.burn([sp.record(token_id=sp.nat(0), amount=sp.nat(100), address=administrator.address)]).run(sender=administrator, valid=False)
     
-    scenario.p("Incorrect owner trying to redeem (Alice is owner of 0 not 1)")
-    scenario += cmta_fa2_contract.redeem([sp.record(token_id=sp.nat(1), amount=sp.nat(100))]).run(sender=alice, valid=False)
+    scenario.p("Incorrect owner trying to burn (Alice is owner of 0 not 1)")
+    scenario += cmta_fa2_contract.burn([sp.record(token_id=sp.nat(1), amount=sp.nat(100), address=alice.address)]).run(sender=alice, valid=False)
     
-    scenario.p("Correct owner trying to batch redeem (Alice is owner of 0 not 1 and 2)")
-    scenario += cmta_fa2_contract.redeem([sp.record(token_id=sp.nat(0), amount=sp.nat(100)), sp.record(token_id=sp.nat(1), amount=sp.nat(100)), sp.record(token_id=sp.nat(1), amount=sp.nat(100))]).run(sender=alice, valid=False)
+    scenario.p("Correct owner trying to batch burn (Alice is owner of 0 not 1 and 2)")
+    scenario += cmta_fa2_contract.burn([sp.record(token_id=sp.nat(0), amount=sp.nat(100), address=alice.address), sp.record(token_id=sp.nat(1), amount=sp.nat(100), address=alice.address), sp.record(token_id=sp.nat(1), amount=sp.nat(100), address=alice.address)]).run(sender=alice, valid=False)
     
-    scenario.p("Correct owners redeeming tokens")
-    scenario += cmta_fa2_contract.redeem([sp.record(token_id=sp.nat(0), amount=sp.nat(100))]).run(sender=alice, valid=True)
-    scenario += cmta_fa2_contract.redeem([sp.record(token_id=sp.nat(1), amount=sp.nat(100))]).run(sender=bob, valid=True)
-    scenario += cmta_fa2_contract.redeem([sp.record(token_id=sp.nat(2), amount=sp.nat(100))]).run(sender=dan, valid=True)
+    scenario.p("Correct owners burning tokens")
+    scenario += cmta_fa2_contract.burn([sp.record(token_id=sp.nat(0), amount=sp.nat(100), address=alice.address)]).run(sender=alice, valid=True)
+    scenario += cmta_fa2_contract.burn([sp.record(token_id=sp.nat(1), amount=sp.nat(100), address=bob.address)]).run(sender=bob, valid=True)
+    scenario += cmta_fa2_contract.burn([sp.record(token_id=sp.nat(2), amount=sp.nat(100), address=dan.address)]).run(sender=dan, valid=True)
     scenario.verify(cmta_fa2_contract.data.ledger[LedgerKey.make(0, alice.address)] == 101)
     scenario.verify(cmta_fa2_contract.data.ledger[LedgerKey.make(1, bob.address)] == 101)
     scenario.verify(cmta_fa2_contract.data.ledger[LedgerKey.make(2, dan.address)] == 101)
     
-    scenario.p("Cannot redeem more than owner has")
-    scenario += cmta_fa2_contract.redeem([sp.record(token_id=sp.nat(0), amount=sp.nat(201))]).run(sender=alice, valid=False)
-    scenario += cmta_fa2_contract.redeem([sp.record(token_id=sp.nat(1), amount=sp.nat(201))]).run(sender=bob, valid=False)
-    scenario += cmta_fa2_contract.redeem([sp.record(token_id=sp.nat(2), amount=sp.nat(201))]).run(sender=dan, valid=False)
+    scenario.p("Cannot burn more than owner has")
+    scenario += cmta_fa2_contract.burn([sp.record(token_id=sp.nat(0), amount=sp.nat(201), address=alice.address)]).run(sender=alice, valid=False)
+    scenario += cmta_fa2_contract.burn([sp.record(token_id=sp.nat(1), amount=sp.nat(201), address=bob.address)]).run(sender=bob, valid=False)
+    scenario += cmta_fa2_contract.burn([sp.record(token_id=sp.nat(2), amount=sp.nat(201), address=dan.address)]).run(sender=dan, valid=False)
     
-    scenario.p("Correct owners redeeming additional amounts of tokens")
-    scenario += cmta_fa2_contract.redeem([sp.record(token_id=sp.nat(0), amount=sp.nat(101))]).run(sender=alice, valid=True)
-    scenario += cmta_fa2_contract.redeem([sp.record(token_id=sp.nat(1), amount=sp.nat(101))]).run(sender=bob, valid=True)
-    scenario += cmta_fa2_contract.redeem([sp.record(token_id=sp.nat(2), amount=sp.nat(101))]).run(sender=dan, valid=True)
+    scenario.p("Correct owners burning additional amounts of tokens")
+    scenario += cmta_fa2_contract.burn([sp.record(token_id=sp.nat(0), amount=sp.nat(101), address=alice.address)]).run(sender=alice, valid=True)
+    scenario += cmta_fa2_contract.burn([sp.record(token_id=sp.nat(1), amount=sp.nat(101), address=bob.address)]).run(sender=bob, valid=True)
+    scenario += cmta_fa2_contract.burn([sp.record(token_id=sp.nat(2), amount=sp.nat(101), address=dan.address)]).run(sender=dan, valid=True)
     scenario.verify(~cmta_fa2_contract.data.ledger.contains(LedgerKey.make(0, alice.address)))
     scenario.verify(~cmta_fa2_contract.data.ledger.contains(LedgerKey.make(1, bob.address)))
     scenario.verify(~cmta_fa2_contract.data.ledger.contains(LedgerKey.make(2, dan.address)))
@@ -136,59 +121,18 @@ def test():
     
     scenario.h3("Reassign")
     scenario.p("Bootstrapping by issuing some tokens")
-    scenario += cmta_fa2_contract.issue([sp.record(token_id=sp.nat(0), amount=sp.nat(50))]).run(sender=alice, valid=True)
-    scenario += cmta_fa2_contract.issue([sp.record(token_id=sp.nat(1), amount=sp.nat(47))]).run(sender=bob, valid=True)
-    scenario += cmta_fa2_contract.issue([sp.record(token_id=sp.nat(2), amount=sp.nat(39))]).run(sender=dan, valid=True)
-    
-    scenario.p("Correct admin but not owner trying to reassign")
-    scenario += cmta_fa2_contract.reassign([sp.record(token_id=sp.nat(0), original_holder=alice.address, replacement_holder=alice.address)]).run(sender=administrator, valid=False)
-    
-    scenario.p("Incorrect owner trying to reassign (Alice is owner of 0 not 1)")
-    scenario += cmta_fa2_contract.reassign([sp.record(token_id=sp.nat(1), original_holder=alice.address,replacement_holder=alice.address)]).run(sender=alice, valid=False)
-    
-    scenario.p("Correct owner trying to batch reassign (Alice is owner of 0 not 1 and 2)")
-    scenario += cmta_fa2_contract.reassign([sp.record(token_id=sp.nat(0), original_holder=alice.address,replacement_holder=alice.address), sp.record(token_id=sp.nat(1), original_holder=bob.address, replacement_holder=alice.address), sp.record(token_id=sp.nat(2), original_holder=dan.address, replacement_holder=alice.address)]).run(sender=alice, valid=False)
-    
-    scenario.p("Correct owner reassigning to self")
-    scenario += cmta_fa2_contract.reassign([sp.record(token_id=sp.nat(0), original_holder=alice.address, replacement_holder=alice.address)]).run(sender=alice, valid=False)
-    
-    scenario.p("Correct owners reassigning tokens")
-    scenario += cmta_fa2_contract.reassign([sp.record(token_id=sp.nat(1), original_holder=bob.address, replacement_holder=alice.address)]).run(sender=bob, valid=True)
-    scenario += cmta_fa2_contract.reassign([sp.record(token_id=sp.nat(2), original_holder=dan.address, replacement_holder=alice.address)]).run(sender=dan, valid=True)
-
+    scenario += cmta_fa2_contract.mint([sp.record(token_id=sp.nat(0), amount=sp.nat(50), address=alice.address)]).run(sender=alice, valid=True)
+    scenario += cmta_fa2_contract.mint([sp.record(token_id=sp.nat(1), amount=sp.nat(47), address=alice.address)]).run(sender=bob, valid=True)
+    scenario += cmta_fa2_contract.mint([sp.record(token_id=sp.nat(2), amount=sp.nat(39), address=alice.address)]).run(sender=dan, valid=True)
+       
     scenario.verify(cmta_fa2_contract.data.ledger[LedgerKey.make(0, alice.address)] == 50)
     scenario.verify(cmta_fa2_contract.data.ledger[LedgerKey.make(1, alice.address)] == 47)
     scenario.verify(cmta_fa2_contract.data.ledger[LedgerKey.make(2, alice.address)] == 39)
     
-    scenario.p("Correct owner reassigning non existings balances")
-    scenario += cmta_fa2_contract.reassign([sp.record(token_id=sp.nat(1), original_holder=dan.address, replacement_holder=alice.address)]).run(sender=bob, valid=False)
-    
-    scenario.p("Can now only redeem if token on owner address")
-    scenario += cmta_fa2_contract.redeem([sp.record(token_id=sp.nat(1), amount=sp.nat(1))]).run(sender=bob, valid=False)
-    scenario += cmta_fa2_contract.redeem([sp.record(token_id=sp.nat(2), amount=sp.nat(1))]).run(sender=dan, valid=False)
+    scenario.p("Can now only burn if token on owner address")
+    scenario += cmta_fa2_contract.burn([sp.record(token_id=sp.nat(1), amount=sp.nat(1), address=bob.address)]).run(sender=bob, valid=False)
+    scenario += cmta_fa2_contract.burn([sp.record(token_id=sp.nat(2), amount=sp.nat(1), address=dan.address)]).run(sender=dan, valid=False)
 
-    
-    scenario.h3("Destroy")
-    scenario.p("Correct admin but not owner trying to destroy")
-    scenario += cmta_fa2_contract.destroy([sp.record(token_id=sp.nat(0), holders=[alice.address, bob.address, dan.address])]).run(sender=administrator, valid=False)
-    
-    scenario.p("Incorrect owner trying to destroy (Alice is owner of 0 not 1)")
-    scenario += cmta_fa2_contract.destroy([sp.record(token_id=sp.nat(1), holders=[alice.address, bob.address, dan.address])]).run(sender=alice, valid=False)
-    
-    scenario.p("Correct owner trying to batch destroy (Alice is owner of 0 not 1 and 2)")
-    scenario += cmta_fa2_contract.destroy([sp.record(token_id=sp.nat(0), holders=[alice.address, bob.address, dan.address]), sp.record(token_id=sp.nat(1), holders=[alice.address, bob.address, dan.address]), sp.record(token_id=sp.nat(2), holders=[alice.address, bob.address, dan.address])]).run(sender=alice, valid=False)
-    
-    scenario.p("Correct owners destroying tokens")
-    scenario += cmta_fa2_contract.destroy([sp.record(token_id=sp.nat(1), holders=[alice.address])]).run(sender=bob, valid=True)
-    scenario += cmta_fa2_contract.destroy([sp.record(token_id=sp.nat(2), holders=[alice.address])]).run(sender=dan, valid=True)
-
-    scenario.verify(cmta_fa2_contract.data.ledger[LedgerKey.make(0, alice.address)] == 50)
-    scenario.verify(cmta_fa2_contract.data.ledger[LedgerKey.make(1, bob.address)] == 47)
-    scenario.verify(cmta_fa2_contract.data.ledger[LedgerKey.make(2, dan.address)] == 39)
-    
-    scenario.p("Correct owner destroying non existings balances")
-    scenario += cmta_fa2_contract.destroy([sp.record(token_id=sp.nat(1), holders=[alice.address, bob.address, dan.address])]).run(sender=bob, valid=False)
-    
     scenario.h3("Pause")
     scenario.p("Correct admin but not owner trying to pause")
     scenario += cmta_fa2_contract.pause([sp.nat(0)]).run(sender=administrator, valid=False)
@@ -264,7 +208,7 @@ def test():
     allow_list_rule_engine_contract = AllowListRuleEngine()
     scenario += allow_list_rule_engine_contract
     scenario += allow_list_rule_engine_contract.add(alice.address)
-    scenario += cmta_fa2_contract.set_rules([sp.record(token_id=sp.nat(0), rule_contract=allow_list_rule_engine_contract.address)]).run(sender=alice, valid=True)
+    scenario += cmta_fa2_contract.set_rule_engines([sp.record(token_id=sp.nat(0), rule_contract=allow_list_rule_engine_contract.address)]).run(sender=alice, valid=True)
     # scenario += cmta_fa2_contract.transfer([sp.record(from_=alice.address, txs=[sp.record(to_=dan.address, token_id=sp.nat(0), amount=sp.nat(1))])]).run(sender=alice, valid=False)
     scenario += allow_list_rule_engine_contract.add(dan.address)
     scenario += cmta_fa2_contract.transfer([sp.record(from_=alice.address, txs=[sp.record(to_=dan.address, token_id=sp.nat(0), amount=sp.nat(1))])]).run(sender=alice, valid=True)
@@ -347,4 +291,5 @@ def test():
     scenario.verify(cmta_fa2_contract.view_snapshot_balance_of(SnapshotLedgerKey.make(token_id, bob.address, future_time))==5)
 
 
-    
+    scenario.p("Snapshot total Supplies")
+    #scenario.verify(cmta_fa2_contract.view_snapshot_balance_of(SnapshotLedgerKey.make(token_id, bob.address, future_time))==5)

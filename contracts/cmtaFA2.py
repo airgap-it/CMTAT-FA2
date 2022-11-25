@@ -24,7 +24,6 @@ This allows for batched operations.
  - Administrator:         the administrator of a specific token_id (one per token_id).
  - Owner:                 the token holder (n per token_id). In our context the actual shareholder.
  - Batch:                 allow for multiple changes/executions in one method call. Will always fail for all requests (and revert) in case a single one fails. 
- - Contact:               contact data in bytes. This can be encrypted or unencrypted. Used for shareholder identity (recommended encrypted/not accessible for everyone) and/or token contact (readable for everyone) for shareholders.
  - Plurals:               plurals are used in the variable name to signal a list. If the plural does not make sense, we choose the _list postfix. 
 """
 import smartpy as sp
@@ -39,9 +38,9 @@ class FA2ErrorMessage:
     """This error is thrown if the token id used in to defined"""
     INSUFFICIENT_BALANCE = "{}INSUFFICIENT_BALANCE".format(PREFIX)
     """This error is thrown if the source address transfers an amount that exceeds its balance"""
-    NOT_OWNER = "{}_NOT_OWNER".format(PREFIX)
+    NOT_OWNER = "{}NOT_OWNER".format(PREFIX)
     """This error is thrown if not the owner is performing an action that he/she shouldn't"""
-    NOT_OPERATOR = "{}_NOT_OPERATOR".format(PREFIX)
+    NOT_OPERATOR = "{}NOT_OPERATOR".format(PREFIX)
     """This error is thrown if neither token owner nor permitted operators are trying to transfer an amount"""
 
 class TokenMetadata:
@@ -213,7 +212,7 @@ class AdministrableFA2(BaseFA2):
     def get_init_storage(self):
         """Returns the initial storage of the contract"""
         storage = super().get_init_storage()
-        storage['administrator_allowmap'] = sp.set_type_expr(self.administrator_allowmap, sp.TMap(sp.TAddress, sp.TBool))
+        storage['administrator_allowmap'] = sp.set_type_expr(self.administrator_allowmap, sp.TMap(sp.TAddress, sp.TUnit))
         storage['administrators'] = sp.big_map(tkey=LedgerKey.get_type(), tvalue = sp.TNat)
         return storage
         
@@ -233,7 +232,7 @@ class AdministrableFA2(BaseFA2):
                 sp.verify(self.data.administrators.get(administrator_ledger_key, sp.nat(0))==AdministratorState.IS_ADMIN, message = AdministrableErrorMessage.NOT_ADMIN)
             with sp.else_():
                 with sp.if_(sp.len(self.data.administrator_allowmap)>0):
-                    sp.verify(self.data.administrator_allowmap.get(sp.sender, False), message = AdministrableErrorMessage.NOT_ADMIN)
+                    sp.verify(self.data.administrator_allowmap.contains(sp.sender), message = AdministrableErrorMessage.NOT_ADMIN)
                 self.data.administrators[administrator_ledger_key] = AdministratorState.IS_ADMIN    
             self.data.token_metadata[token_metadata.token_id] = token_metadata
     
@@ -272,15 +271,9 @@ class AdministrableFA2(BaseFA2):
         sp.verify(self.data.administrators.get(administrator_ledger_key, sp.nat(0))==AdministratorState.IS_ADMIN, message = AdministrableErrorMessage.NOT_ADMIN)
         del self.data.administrators[administrator_to_remove_key]
     
-class Contact:
-    def get_type():
-        return sp.TRecord(token_id = sp.TNat, contact = sp.TBytes).layout(("token_id", "contact"))
-    def get_batch_type():
-        return sp.TList(Contact.get_type())
-
 class TokenAmount:
     def get_type():
-        return sp.TRecord(token_id = sp.TNat, amount = sp.TNat).layout(("token_id", "amount"))
+        return sp.TRecord(token_id = sp.TNat, amount = sp.TNat, address = sp.TAddress).layout(("token_id", ("amount", "address")))
     def get_batch_type():
         return sp.TList(TokenAmount.get_type())
 
@@ -349,7 +342,8 @@ class CMTAFA2(AdministrableFA2):
         storage = super().get_init_storage()
         storage['snapshot_ledger'] = sp.big_map(tkey=SnapshotLedgerKey.get_type(), tvalue=sp.TNat)
         storage['snapshot_lookup'] = sp.big_map(tkey=SnapshotLookupKey.get_type(), tvalue=sp.TTimestamp)
-        storage['token_context'] = sp.big_map(tkey=sp.TNat, tvalue=sp.TRecord(contact=sp.TBytes, is_paused=sp.TBool, can_transfer_rule_contract=sp.TAddress, current_snapshot=sp.TOption(sp.TTimestamp), next_snapshot=sp.TOption(sp.TTimestamp)))
+        storage['snapshot_total_supply'] = sp.big_map(tkey=SnapshotLookupKey.get_type(), tvalue=sp.TNat)
+        storage['token_context'] = sp.big_map(tkey=sp.TNat, tvalue=sp.TRecord(is_paused=sp.TBool, validate_transfer_rule_contract=sp.TAddress, current_snapshot=sp.TOption(sp.TTimestamp), next_snapshot=sp.TOption(sp.TTimestamp)))
         storage['identities'] = sp.big_map(tkey=sp.TAddress, tvalue=sp.TBytes)
         return storage
         
@@ -367,70 +361,49 @@ class CMTAFA2(AdministrableFA2):
             sp.verify((~self.data.token_context.contains(token_id)), message = CMTAFA2ErrorMessage.TOKEN_EXISTS)            
             administrator_ledger_key = LedgerKey.make(token_id, sp.sender)
             sp.verify(self.data.administrators.get(administrator_ledger_key, sp.nat(0))==AdministratorState.IS_ADMIN, message = AdministrableErrorMessage.NOT_ADMIN)
-            self.data.token_context[token_id] = sp.record(contact=NULL_BYTES, is_paused=False, can_transfer_rule_contract=NULL_ADDRESS, current_snapshot=sp.none, next_snapshot=sp.none)
+            self.data.token_context[token_id] = sp.record(is_paused=False, validate_transfer_rule_contract=NULL_ADDRESS, current_snapshot=sp.none, next_snapshot=sp.none)
         
     @sp.entry_point
-    def set_contacts(self, contacts):
-        """Allows to set the contact of multiple tokens, only token a administrator can do this"""
-        sp.set_type_expr(contacts, Contact.get_batch_type())
-        with sp.for_('contact', contacts) as contact:
-            token_context = self.data.token_context[contact.token_id]
-            administrator_ledger_key = LedgerKey.make(contact.token_id, sp.sender)
-            sp.verify(self.data.administrators.get(administrator_ledger_key, sp.nat(0))==AdministratorState.IS_ADMIN, message = AdministrableErrorMessage.NOT_ADMIN)
-            token_context.contact = contact.contact
-            self.data.token_context[contact.token_id] = token_context
-
-    @sp.entry_point
-    def issue(self, token_amounts):
-        """Allows to issue new tokens to the calling admin's address, only a token administrator can do this"""
+    def mint(self, token_amounts):
+        """Allows to mint new tokens to the calling admin's address, only a token administrator can do this"""
         sp.set_type(token_amounts, TokenAmount.get_batch_type())
         with sp.for_('token_amount', token_amounts) as token_amount:
             administrator_ledger_key = LedgerKey.make(token_amount.token_id, sp.sender)
+            recipient_ledger_key = LedgerKey.make(token_amount.token_id, token_amount.address)
             sp.verify(self.data.administrators.get(administrator_ledger_key, sp.nat(0))==AdministratorState.IS_ADMIN, message = AdministrableErrorMessage.NOT_ADMIN)
             sp.verify(self.data.token_metadata.contains(token_amount.token_id), message = FA2ErrorMessage.TOKEN_UNDEFINED)
-            self.data.ledger[administrator_ledger_key] = self.data.ledger.get(administrator_ledger_key, 0) + token_amount.amount
+            
+            token_context = sp.local("token_context", self.data.token_context[token_amount.token_id])
+            with sp.if_(token_context.value.next_snapshot.is_some()):
+                snapshot_lookup_key = SnapshotLookupKey.make(token_amount.token_id, token_context.value.next_snapshot.open_some())
+                with sp.if_((token_context.value.next_snapshot.open_some() < sp.now) & ~self.data.snapshot_total_supply.contains(snapshot_lookup_key)):                    
+                    self.data.snapshot_total_supply[snapshot_lookup_key] = self.data.total_supply.get(token_amount.token_id, 0)
+            
+            self.data.ledger[recipient_ledger_key] = self.data.ledger.get(recipient_ledger_key, 0) + token_amount.amount
             self.data.total_supply[token_amount.token_id] = self.data.total_supply.get(token_amount.token_id, 0) + token_amount.amount
-    
+
+                   
     @sp.entry_point
-    def redeem(self, token_amounts):
-        """Allows to redeem tokens on the calling admin's address, only a token administrator can do this"""
+    def burn(self, token_amounts):
+        """Allows to burn tokens on the calling admin's address, only a token administrator can do this"""
         sp.set_type(token_amounts, TokenAmount.get_batch_type())
         with sp.for_('token_amount', token_amounts) as token_amount:
             administrator_ledger_key = LedgerKey.make(token_amount.token_id, sp.sender)
+            recipient_ledger_key = LedgerKey.make(token_amount.token_id, token_amount.address)
             sp.verify(self.data.administrators.get(administrator_ledger_key, sp.nat(0))==AdministratorState.IS_ADMIN, message = AdministrableErrorMessage.NOT_ADMIN)
-            sp.verify(self.data.ledger[administrator_ledger_key]>=token_amount.amount, message = FA2ErrorMessage.INSUFFICIENT_BALANCE)
-            self.data.ledger[administrator_ledger_key] = sp.as_nat(self.data.ledger.get(administrator_ledger_key, 0) - token_amount.amount)
+            sp.verify(self.data.ledger[recipient_ledger_key]>=token_amount.amount, message = FA2ErrorMessage.INSUFFICIENT_BALANCE)
+            
+            token_context = sp.local("token_context", self.data.token_context[token_amount.token_id])
+            with sp.if_(token_context.value.next_snapshot.is_some()):
+                snapshot_lookup_key = SnapshotLookupKey.make(token_amount.token_id, token_context.value.next_snapshot.open_some())
+                with sp.if_((token_context.value.next_snapshot.open_some() < sp.now) & ~self.data.snapshot_total_supply.contains(snapshot_lookup_key)):                    
+                    self.data.snapshot_total_supply[snapshot_lookup_key] = self.data.total_supply.get(token_amount.token_id, 0)
+                        
+            self.data.ledger[recipient_ledger_key] = sp.as_nat(self.data.ledger.get(recipient_ledger_key, 0) - token_amount.amount)
             self.data.total_supply[token_amount.token_id] = sp.as_nat(self.data.total_supply.get(token_amount.token_id, 0) - token_amount.amount)
             
-            with sp.if_(self.data.ledger[administrator_ledger_key] == 0):
-                del self.data.ledger[administrator_ledger_key]
-    
-    @sp.entry_point
-    def reassign(self, reassignments):
-        """Allows to reassing tokens on the calling admin's address, only a token administrator can do this"""
-        sp.set_type(reassignments, Reassignment.get_batch_type())
-        with sp.for_('reassignment', reassignments) as reassignment:
-            administrator_ledger_key = LedgerKey.make(reassignment.token_id, sp.sender)
-            sp.verify(self.data.administrators.get(administrator_ledger_key, sp.nat(0))==AdministratorState.IS_ADMIN, message = AdministrableErrorMessage.NOT_ADMIN)
-            sp.verify(reassignment.original_holder != reassignment.replacement_holder, message = CMTAFA2ErrorMessage.SAME_REASSIGN)
-            original_holder_ledger_key = LedgerKey.make(reassignment.token_id, reassignment.original_holder)
-            replacement_holder_ledger_key = LedgerKey.make(reassignment.token_id, reassignment.replacement_holder)
-            sp.verify(self.data.ledger[original_holder_ledger_key]>sp.nat(0), message = FA2ErrorMessage.INSUFFICIENT_BALANCE)
-            self.data.ledger[replacement_holder_ledger_key] = self.data.ledger[original_holder_ledger_key]
-            del self.data.ledger[original_holder_ledger_key]
-    
-    @sp.entry_point
-    def destroy(self, destructions):
-        """Allows to destroy tokens on the calling admin's address, only a token administrator can do this"""
-        sp.set_type(destructions, Destruction.get_batch_type())
-        with sp.for_('destruction', destructions) as destruction:
-            administrator_ledger_key = LedgerKey.make(destruction.token_id, sp.sender)
-            sp.verify(self.data.administrators.get(administrator_ledger_key, sp.nat(0))==AdministratorState.IS_ADMIN, message = AdministrableErrorMessage.NOT_ADMIN)
-            with sp.for_('holder', destruction.holders) as holder:
-                holder_ledger_key = LedgerKey.make(destruction.token_id, holder)
-                sp.verify(self.data.ledger[holder_ledger_key]>sp.nat(0), message = FA2ErrorMessage.INSUFFICIENT_BALANCE)
-                self.data.ledger[administrator_ledger_key] = self.data.ledger[holder_ledger_key]
-                del self.data.ledger[holder_ledger_key]
+            with sp.if_(self.data.ledger[recipient_ledger_key] == 0):
+                del self.data.ledger[recipient_ledger_key]
                 
     @sp.entry_point
     def pause(self, token_ids):
@@ -455,13 +428,13 @@ class CMTAFA2(AdministrableFA2):
             self.data.token_context[token_id] = token_context
                 
     @sp.entry_point
-    def set_rules(self, rules):
+    def set_rule_engines(self, rules):
         """Allows to specify the rules contract for a specific token, only a token administrator can do this"""
         sp.set_type(rules, Rule.get_batch_type())
         with sp.for_('rule', rules) as rule:
             administrator_ledger_key = LedgerKey.make(rule.token_id, sp.sender)
             sp.verify(self.data.administrators.get(administrator_ledger_key, sp.nat(0))==AdministratorState.IS_ADMIN, message = AdministrableErrorMessage.NOT_ADMIN)
-            self.data.token_context[rule.token_id].can_transfer_rule_contract = rule.rule_contract
+            self.data.token_context[rule.token_id].validate_transfer_rule_contract = rule.rule_contract
     
     @sp.entry_point
     def schedule_snapshot(self, token_id, snapshot_timestamp):
@@ -475,7 +448,19 @@ class CMTAFA2(AdministrableFA2):
         administrator_ledger_key = LedgerKey.make(token_id, sp.sender)
         sp.verify(self.data.administrators.get(administrator_ledger_key, sp.nat(0))==AdministratorState.IS_ADMIN, message = AdministrableErrorMessage.NOT_ADMIN)
         self.data.token_context[token_id].next_snapshot = sp.none
-
+    
+    @sp.entry_point
+    def kill(self):
+        administrator_ledger_key = LedgerKey.make(sp.nat(0), sp.sender)
+        sp.verify(self.data.administrator_allowmap.get(administrator_ledger_key, sp.nat(0))==AdministratorState.IS_ADMIN, message = AdministrableErrorMessage.NOT_ADMIN)
+        self.data.ledger = sp.big_map(tkey=LedgerKey.get_type(), tvalue=sp.TNat)
+        self.data.administrator_allowmap = sp.set_type_expr(self.administrator_allowmap, sp.TMap(sp.TAddress, sp.TBool))
+        self.data.administrators = sp.big_map(tkey=LedgerKey.get_type(), tvalue = sp.TNat)
+        self.data.token_metadata = sp.big_map(tkey=sp.TNat, tvalue = TokenMetadata.get_type())
+        self.data.total_supply = sp.big_map(tkey=sp.TNat, tvalue = sp.TNat)
+        self.data.operators = sp.big_map(tkey=OperatorKey.get_type(), tvalue = sp.TBool)
+        self.data.token_context = sp.big_map(tkey=sp.TNat, tvalue=sp.TRecord(is_paused=sp.TBool, validate_transfer_rule_contract=sp.TAddress, current_snapshot=sp.TOption(sp.TTimestamp), next_snapshot=sp.TOption(sp.TTimestamp)))
+        self.data.identities = sp.big_map(tkey=sp.TAddress, tvalue=sp.TBytes)
     # Owner entrypoints
     # --- END ---
     
@@ -496,9 +481,9 @@ class CMTAFA2(AdministrableFA2):
                 to_user = LedgerKey.make(tx.token_id, tx.to_)
                 operator_key = OperatorKey.make(tx.token_id, transfer.from_, sp.sender)
                 token_context = sp.local("token_context", self.data.token_context[tx.token_id])
-                can_transfer_contract = sp.contract(Transfer.get_type(), token_context.value.can_transfer_rule_contract, entry_point="can_transfer")
-                with sp.if_(can_transfer_contract.is_some()):
-                    sp.transfer(transfer, sp.mutez(0), can_transfer_contract.open_some())
+                validate_transfer_contract = sp.contract(Transfer.get_type(), token_context.value.validate_transfer_rule_contract, entry_point="validate_transfer")
+                with sp.if_(validate_transfer_contract.is_some()):
+                    sp.transfer(transfer, sp.mutez(0), validate_transfer_contract.open_some())
                 sp.verify(((transfer.from_ == sp.sender) | self.data.operators.get(operator_key, False)), message = FA2ErrorMessage.NOT_OWNER) # allows of meta transfers
                 sp.verify(self.data.token_metadata.contains(tx.token_id), message = FA2ErrorMessage.TOKEN_UNDEFINED)
                 sp.verify(~token_context.value.is_paused, message = CMTAFA2ErrorMessage.TOKEN_PAUSED)
@@ -528,6 +513,34 @@ class CMTAFA2(AdministrableFA2):
                     with sp.if_(self.data.ledger[from_user] == 0):
                         del self.data.ledger[from_user]
     
+    @sp.onchain_view()
+    def view_total_supply(self, token_id):
+        sp.set_type(token_id, sp.TNat)
+        sp.result(self.data.total_supply[token_id])    
+    
+    @sp.onchain_view()
+    def view_balance_of(self, ledger_key):
+        sp.set_type(ledger_key, LedgerKey.get_type())
+        sp.result(self.data.ledger[ledger_key])    
+    
+    @sp.onchain_view()
+    def view_current_snapshot(self, token_id):
+        sp.set_type(token_id, sp.TNat)
+        sp.result(self.data.token_context[token_id].current_snapshot)    
+    
+    @sp.onchain_view()
+    def view_next_snapshot(self, token_id):
+        sp.set_type(token_id, sp.TNat)
+        sp.result(self.data.token_context[token_id].next_snapshot)
+
+    @sp.onchain_view()
+    def view_snapshot_total_supply(self, snapshot_lookup_key):
+        sp.set_type(snapshot_lookup_key, SnapshotLookupKey.get_type())
+        with sp.if_(self.data.snapshot_total_supply.contains(snapshot_lookup_key)):
+            sp.result(self.data.snapshot_total_supply[snapshot_lookup_key])
+        with sp.else_():
+            sp.result(self.data.total_supply[snapshot_lookup_key.token_id])
+
     @sp.onchain_view()
     def view_snapshot_balance_of(self, snapshot_ledger_key):
         sp.set_type(snapshot_ledger_key, SnapshotLedgerKey.get_type())
@@ -559,7 +572,7 @@ class AllowListRuleEngine(sp.Contract):
         self.data.allow_list[address] = True
 
     @sp.entry_point
-    def can_transfer(self, transfer):
+    def validate_transfer(self, transfer):
         sp.set_type(transfer, Transfer.get_type())
         with sp.for_('tx', transfer.txs) as tx:
             sp.verify(self.data.allow_list.contains(transfer.from_), message=CMTAFA2ErrorMessage.CANNOT_TRANSFER)

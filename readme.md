@@ -53,4 +53,4 @@ $ /home/coder/smartpy-cli/SmartPy.sh test cmtaFA2.py out
 
 ### Rule Engine
 
-This reference implementation can either be extended/adapted by code. Or another option if the customization is only on the transferrability you can implement and set a `rule_contract`. If a rule contract is set, it needs to provide a `can_transfer(transfer: Transfer)` entrypoint, this entrypoint will be invoked on transfer, it if passes the the transfer will go throuhgh, if it fails however the transfer is rolled back.
+This reference implementation can either be extended/adapted by code. Or another option if the customization is only on the transferrability you can implement and set a `rule_contract`. If a rule contract is set, it needs to provide a `validate_transfer(transfer: Transfer)` entrypoint, this entrypoint will be invoked on transfer, it if passes the the transfer will go throuhgh, if it fails however the transfer is rolled back.
