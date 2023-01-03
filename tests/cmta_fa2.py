@@ -1,6 +1,8 @@
 import smartpy as sp
 
-from contracts.cmtaFA2 import CMTAFA2, LedgerKey, AllowListRuleEngine, SnapshotLedgerKey, SnapshotLookupKey
+from contracts.fa2 import LedgerKey
+from contracts.cmta_fa2 import CMTAFA2, SnapshotLedgerKey, SnapshotLookupKey
+from contracts.allow_list_rule_engine import AllowListRuleEngine
 
 @sp.add_test(name="CMTA20 Blueprint")
 def test():
@@ -205,14 +207,14 @@ def test():
     scenario += cmta_fa2_contract.set_identity(sp.bytes("0x13")).run(sender=dan, valid=True)
     
     scenario.h3("Rule Engine")
-    allow_list_rule_engine_contract = AllowListRuleEngine()
+    allow_list_rule_engine_contract = AllowListRuleEngine(sp.big_map({alice.address:sp.unit, bob.address:sp.unit}))
     scenario += allow_list_rule_engine_contract
-    scenario += allow_list_rule_engine_contract.add(alice.address)
     scenario += cmta_fa2_contract.set_rule_engines([sp.record(token_id=sp.nat(0), rule_contract=allow_list_rule_engine_contract.address)]).run(sender=alice, valid=True)
-    # scenario += cmta_fa2_contract.transfer([sp.record(from_=alice.address, txs=[sp.record(to_=dan.address, token_id=sp.nat(0), amount=sp.nat(1))])]).run(sender=alice, valid=False)
-    scenario += allow_list_rule_engine_contract.add(dan.address)
+    scenario += cmta_fa2_contract.transfer([sp.record(from_=alice.address, txs=[sp.record(to_=dan.address, token_id=sp.nat(0), amount=sp.nat(1))])]).run(sender=alice, valid=False)
+    new_allow_list_rule_engine_contract = AllowListRuleEngine(sp.big_map({alice.address:sp.unit, dan.address:sp.unit, bob.address:sp.unit}))
+    scenario += new_allow_list_rule_engine_contract
+    scenario += cmta_fa2_contract.set_rule_engines([sp.record(token_id=sp.nat(0), rule_contract=new_allow_list_rule_engine_contract.address)]).run(sender=alice, valid=True)
     scenario += cmta_fa2_contract.transfer([sp.record(from_=alice.address, txs=[sp.record(to_=dan.address, token_id=sp.nat(0), amount=sp.nat(1))])]).run(sender=alice, valid=True)
-    scenario += allow_list_rule_engine_contract.add(bob.address)
 
     scenario.h3("Snapshots")
     snapshot_time = sp.timestamp(1)
@@ -227,6 +229,9 @@ def test():
     scenario.verify(cmta_fa2_contract.view_snapshot_balance_of(SnapshotLedgerKey.make(token_id, dan.address, snapshot_time))==9)
     scenario.verify(cmta_fa2_contract.view_snapshot_balance_of(SnapshotLedgerKey.make(token_id, bob.address, snapshot_time))==2)
 
+    scenario.p("Owner cannot reschedule unless he removes the previous one")
+    scenario += cmta_fa2_contract.schedule_snapshot(sp.record(token_id=token_id, snapshot_timestamp=sp.timestamp(2))).run(sender=alice, valid=False)
+    
     scenario.p("Alice now transfers")
     future_time = sp.timestamp(2)
     scenario += cmta_fa2_contract.transfer([sp.record(from_=alice.address, txs=[sp.record(to_=dan.address, token_id=sp.nat(0), amount=sp.nat(1))])]).run(sender=alice, now=future_time, valid=True)
@@ -305,8 +310,8 @@ def test():
 
 
     scenario.h3("Kill Switch")
-    scenario.p("Only allowmap Admin can kill")
-    scenario += cmta_fa2_contract.kill().run(sender=alice, valid=False)
+    scenario.p("Only Token 0 Admin can kill one time")
+    scenario += cmta_fa2_contract.kill().run(sender=administrator, valid=False)
     scenario += cmta_fa2_contract.kill().run(sender=bob, valid=False)
     scenario += cmta_fa2_contract.kill().run(sender=dan, valid=False)
 
@@ -315,7 +320,7 @@ def test():
     scenario.verify(cmta_fa2_contract.data.ledger.contains(LedgerKey.make(0, dan.address)))
 
     scenario.p("Admin can kill")
-    scenario += cmta_fa2_contract.kill().run(sender=administrator, valid=True)
+    scenario += cmta_fa2_contract.kill().run(sender=alice, valid=True)
     scenario.verify(~cmta_fa2_contract.data.ledger.contains(LedgerKey.make(0, alice.address)))
     scenario.verify(~cmta_fa2_contract.data.ledger.contains(LedgerKey.make(1, alice.address)))
     scenario.verify(~cmta_fa2_contract.data.ledger.contains(LedgerKey.make(2, alice.address)))
@@ -327,5 +332,5 @@ def test():
     scenario.verify(~cmta_fa2_contract.data.ledger.contains(LedgerKey.make(2, dan.address)))
 
     scenario.p("Admin can only one time")
-    scenario += cmta_fa2_contract.kill().run(sender=administrator, valid=False)
+    scenario += cmta_fa2_contract.kill().run(sender=alice, valid=False)
     scenario.verify(~cmta_fa2_contract.data.ledger.contains(LedgerKey.make(2, alice.address)))

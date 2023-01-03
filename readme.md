@@ -26,6 +26,120 @@ This allows for batched operations.
  - Contact:               contact data in bytes. This can be encrypted or unencrypted. Used for shareholder identity (recommended encrypted/not accessible for everyone) and/or token contact (readable for everyone) for shareholders.
  - Plurals:               plurals are used in the variable name to signal a list. If the plural does not make sense, we choose the _list postfix. 
 
+## Functionality
+
+### Rule Engine
+
+This reference implementation can either be extended/adapted by code. Or another option if the customization is only on the transferrability you can implement and set a `rule_contract`. If a rule contract is set, it needs to provide a `validate_transfer(transfer: Transfer)` entrypoint, this entrypoint will be invoked on transfer, it if passes the the transfer will go throuhgh, if it fails however the transfer is rolled back.
+
+The rule engine can be used for usecases like freezing or KYC/DID checks.
+
+### Snapshots
+
+The contract allows to create on-chain snapshots which are implemented in an computationally efficient way for entrypoints with state changes (no loops). Only viewing the snapshot has a loop which scales linearly with the number of snapshots (per token).
+
+The admin of a specific token can schedule 1 snapshot for the future (for that token) using the `schedule_snapshot` entrypoint. A schedule can be overwritten with a new value by re-calling the same entrypoint with a new timestamp as parameter.
+
+On chain you can check the snapshot values by consuming the views `view_snapshot_total_supply` and `view_snapshot_balance_of`.
+
+## Entrypoints
+### `transfer(self, transfers)`
+
+Sligthly adapted FA2 transfer method which includes pause, rule engine and snapshot functionality
+
+### `set_identity(self, identity)`
+
+Allows a user to set the own identity
+
+### `kill(self)`
+
+Wipes irreversebly the storage and ultimately kills the contract such that it can no longer be used. All tokens on it will be affected. Only special admin of token id 0 can do this.
+
+### `unschedule_snapshot(self, token_id)`
+
+Unschedules the scheduled snapshot for the given token_id. Only token administrator can do this. 
+
+### `schedule_snapshot(self, token_id, snapshot_timestamp)`
+
+Schedules a snapshot for the future for a specific token. Only one snapshot can be scheduled, repeated call will overwrite a future snapshot to the new value. Only token administrator can do this.
+
+### `delete_snapshot(self, snapshot_lookup_key)`
+Deletes a snapshot for the given snapshot lookup key (consisting of token_id = sp.TNat, snapshot_timestamp = sp.TTimestamp). Only token administrator can do this.
+
+### `set_rule_engines(self, rules)`
+
+Allows to specify the rules contract for a specific token, only a token administrator can do this
+
+### `unpause(self, token_ids)`
+
+Allows to unpause tokens, only a token administrator can do this
+
+### `pause(self, token_ids)`
+
+Allows to pause tokens, only a token administrator can do this
+
+### `burn(self, token_amounts)`
+
+Allows to burn tokens on the defined recipient address, only a token administrator can do this
+
+### `mint(self, token_amounts)`
+
+Allows to mint new tokens to the defined recipient address, only a token administrator can do this
+
+### `initialise_token(self, token_ids)`
+
+Initialise the token with the required additional token context, can only be called once per token and only one of its admin can call this
+
+### `remove_administrator(self, token_id, administrator_to_remove)`
+
+This removes a administrator entry entirely from the map
+
+### `set_administrator(self, token_id)`
+
+Only a proposed admin can call this entrypoint. If the sender is correct the new admin is set
+    
+### `propose_administrator(self, token_id, proposed_administrator)`
+
+This kicks off the adding of a new administrator for a specific token. First you propose and then the proposed admin can set him/herself with the set_administrator endpoint
+
+### `set_token_metadata(self, token_metadata_list)`
+
+The definition of a new token requires its metadata to be set. Only the administrators of a certain token can edit existing. If no token metadata is set for a given ID the sender will become admin of that token automatically
+
+### `balance_of(self, balance_of_request)`
+
+As per FA2 standard, takes balance_of requests and reponds on the provided callback contract
+    
+### `update_operators(self, update_operators)`
+
+As per FA2 standard, allows a token owner to set an operator who will be allowed to perform transfers on her/his behalf
+
+## Views
+
+### `view_total_supply(self, token_id)`
+
+Given a token id allows the consumer to view the current total supply.
+    
+### `view_balance_of(self, ledger_key)`
+
+Given a ledger key (consisting of token_id = sp.TNat, owner = sp.TAddress) allows the consumer to view the current balance.
+    
+### `view_current_snapshot(self, token_id)`
+
+Given a token id allows the consumer to view the current snapshot timestamp. Can be null. 
+    
+### `view_next_snapshot(self, token_id)`
+
+Given a token id allows the consumer to view the next snapshot timestamp. Can be null.ß
+
+### `view_snapshot_balance_of(snapshot_ledger_key)`
+
+Given the snapshot ledger key (consisting of token_id = sp.TNat, owner = sp.TAddress, snapshot_timestamp = sp.TTimestamp) allows the consumer to retrieve the balance in nat of a given snapshot.
+
+### `view_snapshot_total_supply(self, snapshot_lookup_key)`
+
+Given the snapshot lookup key (consisting of token_id = sp.TNat, snapshot_timestamp = sp.TTimestamp) allows the consumer to retrieve the total supply in nat of a given snapshot.
+
 ## Build/Basic Usage
 
 ### Dependencies
@@ -38,19 +152,16 @@ $ sh <(curl -s https://smartpy.io/cli/install.sh)
 
 You can read more about the installation here: https://smartpy.io/cli/
 
-If you feel lazy you can simply copy/paste the entire 'cmtaFA2.py' content into the web IDE: https://smartpy.io/ide 
+If you feel lazy you can simply copy/paste the entire 'cmta_fa2.py' content into the web IDE: https://smartpy.io/ide 
 
 ### Build
 
 ```
-$ /home/coder/smartpy-cli/SmartPy.sh compile cmtaFA2.py "CMTAFA2()" out
+$ /home/coder/smartpy-cli/SmartPy.sh compile cmta_fa2.py "CMTAFA2()" out
 ```
 
 ### Test
 ```
-$ /home/coder/smartpy-cli/SmartPy.sh test cmtaFA2.py out
+$ /home/coder/smartpy-cli/SmartPy.sh test cmta_fa2.py out
 ```
 
-### Rule Engine
-
-This reference implementation can either be extended/adapted by code. Or another option if the customization is only on the transferrability you can implement and set a `rule_contract`. If a rule contract is set, it needs to provide a `validate_transfer(transfer: Transfer)` entrypoint, this entrypoint will be invoked on transfer, it if passes the the transfer will go throuhgh, if it fails however the transfer is rolled back.
