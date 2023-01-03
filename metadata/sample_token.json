@@ -1,0 +1,8 @@
+{
+    "name": "Acme Inc Digital Shares",
+    "symbol": "ACME",
+    "decimals": 0,
+    "shouldPreferSymbol": true,
+    "terms":"https://cmta.ch/content/15de282276334fc837b9687a13726ab9/cmtat-functional-specifications-jan-2022-final.pdf",
+    "thumbnailUri": "ipfs://QmbvhanNCxydZEbGu1RdqkG3LcpNGv7XYsCHgzWBXnmxRd"
+}

@@ -28,6 +28,51 @@ This allows for batched operations.
 
 ## Functionality
 
+### Token Metadata
+
+We follow the FA2 standard for the metadata specification. The tzip 16 standard allows to extend the metadata with arbitrary fields. As per CMTA we are using the following mapping.
+
+Mandatory attributes, applicable to all CMTAT tokens:
+
+| Specification | Metadata Key |
+|----------|:-------------:|
+| Name |  name |
+| Ticker symbol (optional) |  symbol |
+| Token ID (ISIN or other identifier) (optional) |  fa2 has by default a token ID |
+| Reference to the terms of tokenization, the terms of the instrument, and other
+relevant documents (e.g. prospectus or key information document). The reference
+can take the form of an URL, a combination of an URL and of specific directions
+allowing the user to retrieve the relevant documents (e.g. "[domain].com/shares >
+Tokens") or a fingerprint.  |  terms |
+| Note that decimals number must be set to zero (which means that the tokens admit no fractional parts). |  decimals always set to 0 |
+
+Optional attributes, applicable to tokens used for debt securities:
+
+| Specification | Metadata Key |
+|----------|:-------------:|
+| Guarantor identifier (if any) |  guarantor |
+| Bondholder representative identifier (if any) | bondholder |
+| Maturity date | maturityDate |
+| Interest rate | interestRate |
+| Par value (principal amount) | parValue |
+| Interest schedule format (if any). The purpose of the interest schedule is to set,
+in the parameters of the smart contract, the dates on which the interest
+payments accrue.
+- Format A: start date/end date/period
+- Format B: start date/end date/day of period (e.g. quarter or year)
+- Format C: date 1/date 2/date 3/…. | interestSchedule |
+| Interest payment date (if different from the date on which the interest payment
+accrues:
+- Format A: period (indicating the period between the accrual date for the
+interest payment and the date on which the payment is scheduled to be
+made)
+- Format B: specific date | interestPaymentDate |
+| Day count convention | dayCountConvention |
+| Business day convention | businessDayConvention |
+| Public holidays calendar | publicHolidaysCalendar | 
+
+You can find a sample token metadata in the metadata folder. Once uploaded to either a static url or IPFS you can simply convert the UTF8 string of the URI to bytes and set said bytes in the `set_token_metadata` entrypoint. 
+
 ### Rule Engine
 
 This reference implementation can either be extended/adapted by code. Or another option if the customization is only on the transferrability you can implement and set a `rule_contract`. If a rule contract is set, it needs to provide a `validate_transfer(transfer: Transfer)` entrypoint, this entrypoint will be invoked on transfer, it if passes the the transfer will go throuhgh, if it fails however the transfer is rolled back.
