@@ -14,16 +14,18 @@ There are two main differences compared to the mentioned CMTAT project:
 an admin who gets the token 'owner' status as per CMTAT. Since 'owner' in FA2 receives another sematic
  we a use the expression 'token admin' to relate to the 'CMTAT token owner' and 'token owners' for us
  are what CMTAT calls 'holders'.
-- For gas optimization purposes where it makes sense the entrypoints have been extended to accept lists. 
+- For gas optimization purposes where it makes sense the entry points have been extended to accept lists. 
 This allows for batched operations. 
+
+*Warning:* Unless you know for certain that all tokens handled by the contract have to be destroyed in case of a “kill”, we recommend deploying/originating one contract per token.
 
 ## Glossary
  - Owner (CMTAT):        the administrator of a specific token_id (one per token_id).
  - Holder (CMTAT):       the token holder (n per token_id). In our context the actual shareholder.
+ - Super Administrator:   the administrator that can create new assets and/or kill the entire contract.
  - Administrator:         the administrator of a specific token_id (one per token_id).
  - Owner:                 the token holder (n per token_id). In our context the actual shareholder.
- - Batch:                 allow for multiple changes/executions in one method call. Will always fail for all requests (and revert) in case a single one fails. 
- - Contact:               contact data in bytes. This can be encrypted or unencrypted. Used for shareholder identity (recommended encrypted/not accessible for everyone) and/or token contact (readable for everyone) for shareholders.
+ - Batch:                 allow for multiple changes/executions in one method call. Will always fail for all requests (and revert) in case a single one fails.
  - Plurals:               plurals are used in the variable name to signal a list. If the plural does not make sense, we choose the _list postfix. 
 
 ## Functionality
@@ -57,23 +59,27 @@ Optional attributes, applicable to tokens used for debt securities:
 | Business day convention | businessDayConvention |
 | Public holidays calendar | publicHolidaysCalendar | 
 
-You can find a sample token metadata in the metadata folder. Once uploaded to either a static url or IPFS you can simply convert the UTF8 string of the URI to bytes and set said bytes in the `set_token_metadata` entrypoint. 
+You can find a sample token metadata in the metadata folder. Once uploaded to either a static url or IPFS you can simply convert the UTF8 string of the URI to bytes and set said bytes in the `set_token_metadata` entry point. 
 
 ### Rule Engine
 
-This reference implementation can either be extended/adapted by code. Or another option if the customization is only on the transferrability you can implement and set a `rule_contract`. If a rule contract is set, it needs to provide a `validate_transfer(transfer: Transfer)` entrypoint, this entrypoint will be invoked on transfer, it if passes the the transfer will go throuhgh, if it fails however the transfer is rolled back.
+This reference implementation can either be extended/adapted by code. Or another option if the customization is only on the transferrability you can implement and set a `rule_contract`. If a rule contract is set, it needs to provide a `validate_transfer(transfer: Transfer)` entry point, this entry point will be invoked on transfer, if it passes the transfer will go through, if it fails however the transfer is rolled back.
 
-The rule engine can be used for usecases like freezing or KYC/DID checks.
+The rule engine can be used for use cases like freezing or KYC/DID checks.
+
+#### Freezing/Unfreezing of accounts
+
+CMTA has in the specifications the ability to freeze/unfreeze accounts. Frozen accounts won't be allowed to send or receive tokens. Because the rule engine is the perfect candidate to handle this, instead of creating the reference implementation inside the `CMTAFA2` contract we provide a reference implementation of a freeze rule engine called `FreezeRuleEngine`. The tests show how this can be used.
 
 ### Snapshots
 
-The contract allows to create on-chain snapshots which are implemented in an computationally efficient way for entrypoints with state changes (no loops). Only viewing the snapshot has a loop which scales linearly with the number of snapshots (per token).
+The contract allows creating on-chain snapshots which are implemented in a computationally efficient way for entry points with state changes (no loops). Only viewing the snapshot has a loop which scales linearly with the number of snapshots (per token).
 
-The admin of a specific token can schedule 1 snapshot for the future (for that token) using the `schedule_snapshot` entrypoint. A schedule can be overwritten with a new value by re-calling the same entrypoint with a new timestamp as parameter.
+The admin of a specific token can schedule 1 snapshot for the future (for that token) using the `schedule_snapshot` entry point. To reschedule a future snapshot you Schedules a snapshot for the future for a specific token. Only one snapshot can be scheduled, repeated call will fail, to re-schedule you need to unschedule using the `unschedule_snapshot` entry point first.
 
-On chain you can check the snapshot values by consuming the views `view_snapshot_total_supply` and `view_snapshot_balance_of`.
+On chain, you can check the snapshot values by consuming the views `view_snapshot_total_supply` and `view_snapshot_balance_of`.
 
-## Entrypoints
+## entry points
 ### `transfer(self, transfers)`
 
 Sligthly adapted FA2 transfer method which includes pause, rule engine and snapshot functionality
@@ -84,7 +90,7 @@ Allows a user to set the own identity
 
 ### `kill(self)`
 
-Wipes irreversebly the storage and ultimately kills the contract such that it can no longer be used. All tokens on it will be affected. Only special admin of token id 0 can do this.
+Wipes irreversibly the storage and ultimately kills the contract such that it can no longer be used. All tokens on it will be affected. Only special admin of token id 0 can do this.
 
 ### `unschedule_snapshot(self, token_id)`
 
@@ -92,30 +98,31 @@ Unschedules the scheduled snapshot for the given token_id. Only token administra
 
 ### `schedule_snapshot(self, token_id, snapshot_timestamp)`
 
-Schedules a snapshot for the future for a specific token. Only one snapshot can be scheduled, repeated call will overwrite a future snapshot to the new value. Only token administrator can do this.
+Schedules a snapshot for the future for a specific token. Only one snapshot can be scheduled, repeated call will fail, to re-schedule you need to unschedule using the `unschedule_snapshot` entry point first. Only token administrator can do this.
+
 
 ### `delete_snapshot(self, snapshot_lookup_key)`
 Deletes a snapshot for the given snapshot lookup key (consisting of token_id = sp.TNat, snapshot_timestamp = sp.TTimestamp). Only token administrator can do this.
 
 ### `set_rule_engines(self, rules)`
 
-Allows to specify the rules contract for a specific token, only a token administrator can do this
+Allows specifying the rules contract for a specific token, only a token administrator can do this.
 
 ### `unpause(self, token_ids)`
 
-Allows to unpause tokens, only a token administrator can do this
+Allows unpausing tokens, only a token administrator can do this.
 
 ### `pause(self, token_ids)`
 
-Allows to pause tokens, only a token administrator can do this
+Allows pausing tokens, only a token administrator can do this.
 
 ### `burn(self, token_amounts)`
 
-Allows to burn tokens on the defined recipient address, only a token administrator can do this
+Allows burning tokens on the defined recipient address, only a token administrator can do this.
 
 ### `mint(self, token_amounts)`
 
-Allows to mint new tokens to the defined recipient address, only a token administrator can do this
+Allows minting new tokens to the defined recipient address, only a token administrator can do this.
 
 ### `initialise_token(self, token_ids)`
 
@@ -123,23 +130,25 @@ Initialise the token with the required additional token context, can only be cal
 
 ### `remove_administrator(self, token_id, administrator_to_remove)`
 
-This removes a administrator entry entirely from the map
+This removes a administrator entry entirely from the map. 
+
+*Warning*: Administrators can remove themselves. Even the super-administrator.
 
 ### `set_administrator(self, token_id)`
 
-Only a proposed admin can call this entrypoint. If the sender is correct the new admin is set
+Only a proposed admin can call this entry point. If the sender is correct the new admin is set.
     
 ### `propose_administrator(self, token_id, proposed_administrator)`
 
-This kicks off the adding of a new administrator for a specific token. First you propose and then the proposed admin can set him/herself with the set_administrator endpoint
+This kicks off the process of adding a new administrator for a specific token. First you propose and then the proposed admin can set him/herself with the set_administrator entry point.
 
 ### `set_token_metadata(self, token_metadata_list)`
 
-The definition of a new token requires its metadata to be set. Only the administrators of a certain token can edit existing. If no token metadata is set for a given ID the sender will become admin of that token automatically
+The definition of a new token requires its metadata to be set. Only the administrators of a certain token can edit existing. If no token metadata is set for a given ID the sender will become admin of that token automatically.
 
 ### `balance_of(self, balance_of_request)`
 
-As per FA2 standard, takes balance_of requests and reponds on the provided callback contract
+As per FA2 standard, takes balance_of requests and reponds on the provided callback contract.
     
 ### `update_operators(self, update_operators)`
 
@@ -161,7 +170,7 @@ Given a token id allows the consumer to view the current snapshot timestamp. Can
     
 ### `view_next_snapshot(self, token_id)`
 
-Given a token id allows the consumer to view the next snapshot timestamp. Can be null.ß
+Given a token id allows the consumer to view the next snapshot timestamp. Can be null.
 
 ### `view_snapshot_balance_of(snapshot_ledger_key)`
 
@@ -183,16 +192,35 @@ $ sh <(curl -s https://smartpy.io/cli/install.sh)
 
 You can read more about the installation here: https://smartpy.io/cli/
 
-If you feel lazy you can simply copy/paste the entire 'cmta_fa2.py' content into the web IDE: https://smartpy.io/ide 
+If you feel lazy you can simply open the project in vscode and allow the devcontainer to be built, it will configure everythign for you.
 
-### Build
+### Paths
+
+For the project to compile and the tests to run you need to adapt some environment variables.
 
 ```
-$ /home/coder/smartpy-cli/SmartPy.sh compile cmta_fa2.py "CMTAFA2()" out
+		"PATH": "${containerEnv:PATH}:/home/node/smartpy-cli/",
+		"PYTHONPATH": "/home/node/smartpy-cli/:${containerWorkspaceFolder}",
+```
+
+### Compile
+
+```
+$ SmartPy.sh compile compilations/cmta_fa2.py out
+$ SmartPy.sh compile compilations/freeze_rule_engine.py out
 ```
 
 ### Test
 ```
-$ /home/coder/smartpy-cli/SmartPy.sh test cmta_fa2.py out
+$ SmartPy.sh test tests/cmta_fa2.py out
+```
+
+### Deploy
+
+First make sure you run the compile step above. Also make sure the compile files have been adapted to match your parameters/storage. Then:
+
+```
+$ SmartPy.sh originate-contract --code out/CMTAFA2/step_000_cont_0_contract.tz --storage out/CMTAFA2/step_000_cont_0_storage.tz --rpc https://ghostnet.ecadinfra.com
+$ SmartPy.sh originate-contract --code out/FreezeRuleEngine/step_000_cont_0_contract.tz --storage out/FreezeRuleEngine/step_000_cont_0_storage.tz --rpc https://ghostnet.ecadinfra.com
 ```
 

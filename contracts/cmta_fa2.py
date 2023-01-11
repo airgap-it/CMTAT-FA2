@@ -1,30 +1,8 @@
 """
 # CMTA FA2 Blueprint Implementation
 
-This reference implementation provides an easy to use Tezos Token smart contract following
-the FA2 standard defined [here](https://gitlab.com/tzip/tzip/-/blob/master/proposals/tzip-12/).
-[Capital Markets and technology association](http://www.cmta.ch/) (CMTA) has provided guideance 
-on implementing the required functionalities in order to tokeniza a Swiss corporation's equity
-securities. The blueprint document can be found here [Blueprint]( https://www.cmta.ch/content/52/cmta-blueprint-for-the-tokenization-of-shares-of-swiss-corporations.pdf)  
+Checkout `readme.md` for documenation.
 
-This implementation derived the required functionality from the [CMTA20 project](https://github.com/CMTA/CMTA20). 
-
-There are two main differences compared to the mentioned CMTA20 project:
-
-- FA2 allows for multiple tokens on the same contract. This of course means that we can have per token
-an admin who gets the token 'owner' status as per CMTA20. Since 'owner' in FA2 receives another sematic
- we a use the expression 'token admin' to relate to the 'CMTA20 token owner' and 'token owners' for us
- are what CMTA20 calls 'holders'.
-- For gas optimization purposes where it makes sense the entrypoints have been extended to accept lists. 
-This allows for batched operations. 
-
-## Glossary
- - Owner (CMTA20):        the administrator of a specific token_id (one per token_id).
- - Holder (CMTA20):       the token holder (n per token_id). In our context the actual shareholder.
- - Administrator:         the administrator of a specific token_id (one per token_id).
- - Owner:                 the token holder (n per token_id). In our context the actual shareholder.
- - Batch:                 allow for multiple changes/executions in one method call. Will always fail for all requests (and revert) in case a single one fails. 
- - Plurals:               plurals are used in the variable name to signal a list. If the plural does not make sense, we choose the _list postfix. 
 """
 import smartpy as sp
 
@@ -86,6 +64,9 @@ class SnapshotLedgerKey:
         """Creates a typed ledger key"""
         return sp.set_type_expr(sp.record(token_id = token_id, owner = owner,  snapshot_timestamp = snapshot_timestamp), SnapshotLedgerKey.get_type())
 
+class TokenContext:
+    def get_type():
+        return sp.TRecord(is_paused=sp.TBool, validate_transfer_rule_contract=sp.TAddress, current_snapshot=sp.TOption(sp.TTimestamp), next_snapshot=sp.TOption(sp.TTimestamp))
 
 class CMTAFA2ErrorMessage:
     """Static enum used for the FA2 related errors, using the `FA2_` prefix"""
@@ -106,14 +87,45 @@ class CMTAFA2(AdministrableFA2):
         storage['snapshot_ledger'] = sp.big_map(tkey=SnapshotLedgerKey.get_type(), tvalue=sp.TNat)
         storage['snapshot_lookup'] = sp.big_map(tkey=SnapshotLookupKey.get_type(), tvalue=sp.TTimestamp)
         storage['snapshot_total_supply'] = sp.big_map(tkey=SnapshotLookupKey.get_type(), tvalue=sp.TNat)
-        storage['token_context'] = sp.big_map(tkey=sp.TNat, tvalue=sp.TRecord(is_paused=sp.TBool, validate_transfer_rule_contract=sp.TAddress, current_snapshot=sp.TOption(sp.TTimestamp), next_snapshot=sp.TOption(sp.TTimestamp)))
+        storage['token_context'] = sp.big_map(tkey=sp.TNat, tvalue=TokenContext.get_type())
         storage['identities'] = sp.big_map(tkey=sp.TAddress, tvalue=sp.TBytes)
         return storage
         
-    def __init__(self, administrator_allowmap={}):
-        super().__init__(administrator_allowmap)
-        
-    # Owner Entrypoints 
+    def __init__(self, administrators):
+        super().__init__(administrators)
+
+    # Helper lambdas
+    # Note: This cannot be a lambda because it messes up the storage.
+    def bootstrap_snapshot(self, token_context, token_id):
+        with sp.if_(token_context.value.next_snapshot.is_some()):
+            with sp.if_(token_context.value.next_snapshot.open_some() < sp.now):
+                with sp.if_(token_context.value.current_snapshot.is_some()):
+                    snapshot_lookup_key = SnapshotLookupKey.make(token_id, token_context.value.current_snapshot.open_some())
+                    self.data.snapshot_lookup[snapshot_lookup_key] = token_context.value.next_snapshot.open_some()
+                token_context.value.current_snapshot = token_context.value.next_snapshot
+                token_context.value.next_snapshot = sp.none
+                self.data.token_context[token_id] = token_context.value
+
+    @sp.private_lambda(with_operations=False, with_storage="read-write", wrap_call=True)
+    def set_snapshot_ledger(self, params):
+        sp.set_type_expr(params, sp.TTuple(TokenContext.get_type(), sp.TNat, sp.TAddress))
+        token_context, token_id, address = sp.match_tuple(params, "token_context", "token_id", "address")
+
+        with sp.if_(token_context.current_snapshot.is_some()):
+            snapshot_ledger_key = sp.local("snapshot_ledger_key", SnapshotLedgerKey.make(token_id, address, token_context.current_snapshot.open_some()))
+            with sp.if_(~self.data.snapshot_ledger.contains(snapshot_ledger_key.value)):
+                self.data.snapshot_ledger[snapshot_ledger_key.value] = self.data.ledger.get(LedgerKey.make(token_id, address), 0)
+
+    @sp.private_lambda(with_operations=False, with_storage="read-write", wrap_call=True)
+    def set_snapshot_total_supply(self, params):
+        sp.set_type_expr(params, sp.TPair(TokenContext.get_type(), sp.TNat))
+        token_context, token_id = sp.match_pair(params)
+
+        with sp.if_(token_context.current_snapshot.is_some()):
+            snapshot_lookup_key = sp.local("snapshot_lookup_key", SnapshotLookupKey.make(token_id, token_context.current_snapshot.open_some()))
+            with sp.if_(~self.data.snapshot_total_supply.contains(snapshot_lookup_key.value)):
+                self.data.snapshot_total_supply[snapshot_lookup_key.value] = self.data.total_supply.get(token_id, 0)
+    # Owner entry points 
     # --- START ---
     @sp.entry_point
     def initialise_token(self, token_ids):
@@ -138,22 +150,9 @@ class CMTAFA2(AdministrableFA2):
             
             token_context = sp.local("token_context", self.data.token_context[token_amount.token_id])
             
-            with sp.if_(token_context.value.next_snapshot.is_some()):
-                with sp.if_(token_context.value.next_snapshot.open_some() < sp.now):
-                    with sp.if_(token_context.value.current_snapshot.is_some()):
-                        snapshot_lookup_key = SnapshotLookupKey.make(token_amount.token_id, token_context.value.current_snapshot.open_some())
-                        self.data.snapshot_lookup[snapshot_lookup_key] = token_context.value.next_snapshot.open_some()
-                    token_context.value.current_snapshot = token_context.value.next_snapshot
-                    token_context.value.next_snapshot = sp.none
-                    self.data.token_context[token_amount.token_id] = token_context.value
-            
-            with sp.if_(token_context.value.current_snapshot.is_some()):
-                recipient_snapshot_ledger_key = sp.local("recipient_snapshot_ledger_key", SnapshotLedgerKey.make(token_amount.token_id, token_amount.address, token_context.value.current_snapshot.open_some()))
-                with sp.if_(~self.data.snapshot_ledger.contains(recipient_snapshot_ledger_key.value)):
-                    self.data.snapshot_ledger[recipient_snapshot_ledger_key.value] = self.data.ledger.get(recipient_ledger_key.value, 0)
-                snapshot_lookup_key = sp.local("snapshot_lookup_key", SnapshotLookupKey.make(token_amount.token_id, token_context.value.current_snapshot.open_some()))
-                with sp.if_(~self.data.snapshot_total_supply.contains(snapshot_lookup_key.value)):
-                    self.data.snapshot_total_supply[snapshot_lookup_key.value] = self.data.total_supply.get(token_amount.token_id, 0)                   
+            self.bootstrap_snapshot(token_context, token_amount.token_id)
+            self.set_snapshot_total_supply(sp.pair(token_context.value, token_amount.token_id))
+            self.set_snapshot_ledger((token_context.value, token_amount.token_id, token_amount.address))
             
             self.data.ledger[recipient_ledger_key.value] = self.data.ledger.get(recipient_ledger_key.value, 0) + token_amount.amount
             self.data.total_supply[token_amount.token_id] = self.data.total_supply.get(token_amount.token_id, 0) + token_amount.amount
@@ -170,23 +169,11 @@ class CMTAFA2(AdministrableFA2):
             sp.verify(self.data.ledger[recipient_ledger_key.value]>=token_amount.amount, message = FA2ErrorMessage.INSUFFICIENT_BALANCE)
             
             token_context = sp.local("token_context", self.data.token_context[token_amount.token_id])
-            with sp.if_(token_context.value.next_snapshot.is_some()):
-                with sp.if_(token_context.value.next_snapshot.open_some() < sp.now):
-                    with sp.if_(token_context.value.current_snapshot.is_some()):
-                        snapshot_lookup_key = SnapshotLookupKey.make(token_amount.token_id, token_context.value.current_snapshot.open_some())
-                        self.data.snapshot_lookup[snapshot_lookup_key] = token_context.value.next_snapshot.open_some()
-                    token_context.value.current_snapshot = token_context.value.next_snapshot
-                    token_context.value.next_snapshot = sp.none
-                    self.data.token_context[token_amount.token_id] = token_context.value
             
-            with sp.if_(token_context.value.current_snapshot.is_some()):
-                recipient_snapshot_ledger_key = sp.local("recipient_snapshot_ledger_key", SnapshotLedgerKey.make(token_amount.token_id, token_amount.address, token_context.value.current_snapshot.open_some()))
-                with sp.if_(~self.data.snapshot_ledger.contains(recipient_snapshot_ledger_key.value)):
-                    self.data.snapshot_ledger[recipient_snapshot_ledger_key.value] = self.data.ledger.get(recipient_ledger_key.value, 0)
-                snapshot_lookup_key = sp.local("snapshot_lookup_key", SnapshotLookupKey.make(token_amount.token_id, token_context.value.current_snapshot.open_some()))
-                with sp.if_(~self.data.snapshot_total_supply.contains(snapshot_lookup_key.value)):
-                    self.data.snapshot_total_supply[snapshot_lookup_key.value] = self.data.total_supply.get(token_amount.token_id, 0)
-                        
+            self.bootstrap_snapshot(token_context, token_amount.token_id)
+            self.set_snapshot_total_supply(sp.pair(token_context.value, token_amount.token_id))
+            self.set_snapshot_ledger((token_context.value, token_amount.token_id, token_amount.address))
+                      
             self.data.ledger[recipient_ledger_key.value] = sp.as_nat(self.data.ledger.get(recipient_ledger_key.value, 0) - token_amount.amount)
             self.data.total_supply[token_amount.token_id] = sp.as_nat(self.data.total_supply.get(token_amount.token_id, 0) - token_amount.amount)
             
@@ -226,7 +213,7 @@ class CMTAFA2(AdministrableFA2):
     
     @sp.entry_point
     def schedule_snapshot(self, token_id, snapshot_timestamp):
-        """Schedules a snapshot for the future for a specific token. Only one snapshot can be scheduled, repeated call will overwrite a future snapshot to the new value. Only token administrator can do this."""
+        """Schedules a snapshot for the future for a specific token. Only one snapshot can be scheduled, repeated call will fail, to re-schedule you need to unschedule using the `unschedule_snapshot` entry point first. Only token administrator can do this."""
         administrator_ledger_key = LedgerKey.make(token_id, sp.sender)
         sp.verify(self.data.administrators.get(administrator_ledger_key, sp.nat(0))==AdministratorState.IS_ADMIN, message = AdministrableErrorMessage.NOT_ADMIN)
         sp.verify(self.data.token_context[token_id].next_snapshot.is_none(), message=CMTAFA2ErrorMessage.SNAPSHOT_ALREADY_SCHEDULED)
@@ -250,21 +237,20 @@ class CMTAFA2(AdministrableFA2):
 
     @sp.entry_point
     def kill(self):
-        """Wipes irreversebly the storage and ultimately kills the contract such that it can no longer be used. All tokens on it will be affected. Only special admin of token id 0 can do this."""
+        """Wipes irreversibly the storage and ultimately kills the contract such that it can no longer be used. All tokens on it will be affected. Only special admin of token id 0 can do this."""
         administrator_ledger_key = LedgerKey.make(sp.nat(0), sp.sender)
         sp.verify(self.data.administrators.get(administrator_ledger_key, sp.nat(0))==AdministratorState.IS_ADMIN, message = AdministrableErrorMessage.NOT_ADMIN)
         self.data.ledger = sp.big_map(tkey=LedgerKey.get_type(), tvalue=sp.TNat)
-        self.data.administrator_allowmap = sp.map(tkey=sp.TAddress, tvalue=sp.TUnit)
         self.data.administrators = sp.big_map(tkey=LedgerKey.get_type(), tvalue = sp.TNat)
         self.data.token_metadata = sp.big_map(tkey=sp.TNat, tvalue = TokenMetadata.get_type())
         self.data.total_supply = sp.big_map(tkey=sp.TNat, tvalue = sp.TNat)
         self.data.operators = sp.big_map(tkey=OperatorKey.get_type(), tvalue = sp.TUnit)
         self.data.token_context = sp.big_map(tkey=sp.TNat, tvalue=sp.TRecord(is_paused=sp.TBool, validate_transfer_rule_contract=sp.TAddress, current_snapshot=sp.TOption(sp.TTimestamp), next_snapshot=sp.TOption(sp.TTimestamp)))
         self.data.identities = sp.big_map(tkey=sp.TAddress, tvalue=sp.TBytes)
-    # Owner entrypoints
+    # Owner entry points
     # --- END ---
     
-    # Open Entrypoints
+    # Open entry points
     @sp.entry_point
     def set_identity(self, identity):
         """Allows a user to set the own identity"""
@@ -291,22 +277,9 @@ class CMTAFA2(AdministrableFA2):
                     
                     sp.verify((self.data.ledger[from_user.value] >= tx.amount), message = FA2ErrorMessage.INSUFFICIENT_BALANCE)
                     
-                    with sp.if_(token_context.value.next_snapshot.is_some()):
-                        with sp.if_(token_context.value.next_snapshot.open_some() < sp.now):
-                            with sp.if_(token_context.value.current_snapshot.is_some()):
-                                snapshot_lookup_key = SnapshotLookupKey.make(tx.token_id, token_context.value.current_snapshot.open_some())
-                                self.data.snapshot_lookup[snapshot_lookup_key] = token_context.value.next_snapshot.open_some()
-                            token_context.value.current_snapshot = token_context.value.next_snapshot
-                            token_context.value.next_snapshot = sp.none
-                            self.data.token_context[tx.token_id] = token_context.value
-                    
-                    with sp.if_(token_context.value.current_snapshot.is_some()):
-                        from_snapshot_ledger_key = sp.local("from_snapshot_ledger_key", SnapshotLedgerKey.make(tx.token_id, transfer.from_, token_context.value.current_snapshot.open_some()))
-                        to_snapshot_ledger_key = sp.local("to_snapshot_ledger_key", SnapshotLedgerKey.make(tx.token_id, tx.to_, token_context.value.current_snapshot.open_some()))
-                        with sp.if_(~self.data.snapshot_ledger.contains(from_snapshot_ledger_key.value)):
-                            self.data.snapshot_ledger[from_snapshot_ledger_key.value] = self.data.ledger.get(from_user.value, 0)
-                        with sp.if_(~self.data.snapshot_ledger.contains(to_snapshot_ledger_key.value)):
-                            self.data.snapshot_ledger[to_snapshot_ledger_key.value] = self.data.ledger.get(to_user.value, 0)
+                    self.bootstrap_snapshot(token_context, tx.token_id)
+                    self.set_snapshot_ledger((token_context.value, tx.token_id, tx.to_))
+                    self.set_snapshot_ledger((token_context.value, tx.token_id, transfer.from_))
                     
                     with sp.if_(tx.amount >= sp.nat(0)):
                         self.data.ledger[from_user.value] = sp.as_nat(self.data.ledger[from_user.value] - tx.amount)

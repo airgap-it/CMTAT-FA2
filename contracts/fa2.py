@@ -98,7 +98,6 @@ class OperatorKey:
         """Creates a typed operator key"""
         return sp.set_type_expr(sp.record(token_id = token_id, owner = owner, operator = operator), OperatorKey.get_type())
 
-
 class BaseFA2(sp.Contract):
     """Base FA2 contract, which implements the required entry points"""
     def get_init_storage(self):
@@ -161,7 +160,6 @@ class BaseFA2(sp.Contract):
             
         sp.transfer(responses.value, sp.mutez(0), balance_of_request.callback)
 
-
 class AdministratorState:
     """Static enum used for the admin rights and propose flow"""    
     IS_ADMIN = sp.nat(1)
@@ -179,27 +177,26 @@ class AdministrableFA2(BaseFA2):
     def get_init_storage(self):
         """Returns the initial storage of the contract"""
         storage = super().get_init_storage()
-        storage['administrator_allowmap'] = sp.set_type_expr(self.administrator_allowmap, sp.TMap(sp.TAddress, sp.TUnit))
-        storage['administrators'] = sp.big_map(tkey=LedgerKey.get_type(), tvalue = sp.TNat)
+        storage['administrators'] = sp.big_map(self.administrators, tkey = LedgerKey.get_type(), tvalue = sp.TNat)
         return storage
         
-    def __init__(self, administrator_allowmap={}):
-        """With the allowmap you can control who can become administrator. If this map is empty then there are no limitations"""
-        self.administrator_allowmap = administrator_allowmap
+    def __init__(self, administrators={}):
+        """With the administrators you can control who can be the super administrator. The super administrator is the admin of token 0."""
+        self.administrators = administrators
         super().__init__()
     
     @sp.entry_point
     def set_token_metadata(self, token_metadata_list):
         """The definition of a new token requires its metadata to be set. Only the administrators of a certain token can edit existing. 
-        If no token metadata is set for a given ID the sender will become admin of that token automatically"""
+        If no token metadata is set for a given ID the sender will become admin of that token automatically if that sender was super administrator (token 0 admin)"""
         sp.set_type(token_metadata_list, TokenMetadata.get_batch_type())
         with sp.for_('token_metadata', token_metadata_list) as token_metadata:
             administrator_ledger_key = LedgerKey.make(token_metadata.token_id, sp.sender)
             with sp.if_(self.data.token_metadata.contains(token_metadata.token_id)):
                 sp.verify(self.data.administrators.get(administrator_ledger_key, sp.nat(0))==AdministratorState.IS_ADMIN, message = AdministrableErrorMessage.NOT_ADMIN)
             with sp.else_():
-                with sp.if_(sp.len(self.data.administrator_allowmap)>0):
-                    sp.verify(self.data.administrator_allowmap.contains(sp.sender), message = AdministrableErrorMessage.NOT_ADMIN)
+                super_administrator_ledger_key = LedgerKey.make(sp.nat(0), sp.sender) 
+                sp.verify(self.data.administrators.get(super_administrator_ledger_key, sp.nat(0))==AdministratorState.IS_ADMIN, message = AdministrableErrorMessage.NOT_ADMIN)
                 self.data.administrators[administrator_ledger_key] = AdministratorState.IS_ADMIN    
             self.data.token_metadata[token_metadata.token_id] = token_metadata
     

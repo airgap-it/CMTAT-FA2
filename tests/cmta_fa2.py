@@ -2,7 +2,7 @@ import smartpy as sp
 
 from contracts.fa2 import LedgerKey
 from contracts.cmta_fa2 import CMTAFA2, SnapshotLedgerKey, SnapshotLookupKey
-from contracts.allow_list_rule_engine import AllowListRuleEngine
+from contracts.freeze_rule_engine import FreezeRuleEngine
 
 @sp.add_test(name="CMTA20 Blueprint")
 def test():
@@ -18,7 +18,7 @@ def test():
 
     scenario.h2("Accounts")
     scenario.show([administrator, alice, bob, dan])
-    cmta_fa2_contract = CMTAFA2({administrator.address:sp.unit})
+    cmta_fa2_contract = CMTAFA2({LedgerKey.make(0, administrator.address):1})
     scenario += cmta_fa2_contract
     
     scenario.h2("Admin Calls")
@@ -207,14 +207,19 @@ def test():
     scenario += cmta_fa2_contract.set_identity(sp.bytes("0x13")).run(sender=dan, valid=True)
     
     scenario.h3("Rule Engine")
-    allow_list_rule_engine_contract = AllowListRuleEngine(sp.big_map({alice.address:sp.unit, bob.address:sp.unit}))
-    scenario += allow_list_rule_engine_contract
-    scenario += cmta_fa2_contract.set_rule_engines([sp.record(token_id=sp.nat(0), rule_contract=allow_list_rule_engine_contract.address)]).run(sender=alice, valid=True)
+    freeze_rule_engine_contract = FreezeRuleEngine(administrator.address, {alice.address:sp.unit, bob.address:sp.unit})
+    scenario += freeze_rule_engine_contract
+    scenario += cmta_fa2_contract.set_rule_engines([sp.record(token_id=sp.nat(0), rule_contract=freeze_rule_engine_contract.address)]).run(sender=alice, valid=True)
     scenario += cmta_fa2_contract.transfer([sp.record(from_=alice.address, txs=[sp.record(to_=dan.address, token_id=sp.nat(0), amount=sp.nat(1))])]).run(sender=alice, valid=False)
-    new_allow_list_rule_engine_contract = AllowListRuleEngine(sp.big_map({alice.address:sp.unit, dan.address:sp.unit, bob.address:sp.unit}))
-    scenario += new_allow_list_rule_engine_contract
-    scenario += cmta_fa2_contract.set_rule_engines([sp.record(token_id=sp.nat(0), rule_contract=new_allow_list_rule_engine_contract.address)]).run(sender=alice, valid=True)
+    
+    scenario.p("Only Admin can unfreeze")
+    freeze_rule_engine_contract.unfreeze_account(alice.address).run(sender=alice, valid=False)
+    freeze_rule_engine_contract.unfreeze_account(alice.address).run(sender=administrator, valid=True)
     scenario += cmta_fa2_contract.transfer([sp.record(from_=alice.address, txs=[sp.record(to_=dan.address, token_id=sp.nat(0), amount=sp.nat(1))])]).run(sender=alice, valid=True)
+    
+    scenario.p("Bob still frozen")
+    scenario += cmta_fa2_contract.transfer([sp.record(from_=alice.address, txs=[sp.record(to_=bob.address, token_id=sp.nat(0), amount=sp.nat(1))])]).run(sender=alice, valid=False)
+    freeze_rule_engine_contract.unfreeze_account(bob.address).run(sender=administrator, valid=True)
 
     scenario.h3("Snapshots")
     snapshot_time = sp.timestamp(1)
@@ -235,6 +240,7 @@ def test():
     scenario.p("Alice now transfers")
     future_time = sp.timestamp(2)
     scenario += cmta_fa2_contract.transfer([sp.record(from_=alice.address, txs=[sp.record(to_=dan.address, token_id=sp.nat(0), amount=sp.nat(1))])]).run(sender=alice, now=future_time, valid=True)
+    #sp.trace(cmta_fa2_contract.view_snapshot_balance_of(SnapshotLedgerKey.make(token_id, alice.address, snapshot_time)))
     scenario.verify(cmta_fa2_contract.view_snapshot_balance_of(SnapshotLedgerKey.make(token_id, alice.address, snapshot_time))==39)
     scenario.verify(cmta_fa2_contract.view_snapshot_balance_of(SnapshotLedgerKey.make(token_id, dan.address, snapshot_time))==9)
     scenario.verify(cmta_fa2_contract.view_snapshot_balance_of(SnapshotLedgerKey.make(token_id, bob.address, snapshot_time))==2)
