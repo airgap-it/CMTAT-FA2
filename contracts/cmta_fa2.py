@@ -66,7 +66,15 @@ class SnapshotLedgerKey:
 
 class TokenContext:
     def get_type():
-        return sp.TRecord(is_paused=sp.TBool, validate_transfer_rule_contract=sp.TAddress, current_snapshot=sp.TOption(sp.TTimestamp), next_snapshot=sp.TOption(sp.TTimestamp))
+        return sp.TRecord(is_paused=sp.TBool, validate_transfer_rule_contract=sp.TOption(sp.TAddress), current_snapshot=sp.TOption(sp.TTimestamp), next_snapshot=sp.TOption(sp.TTimestamp))
+
+class ValidationTransfer:
+    def get_type():
+        return sp.TRecord(from_=sp.TAddress, to_=sp.TAddress, token_id=sp.TNat, amount=sp.TNat).layout(("from_", ("to_", ("token_id", "amount"))))
+    
+    def make(from_, to_, token_id, amount):
+        """Creates a typed ledger key"""
+        return sp.set_type_expr(sp.record(from_ = from_, to_ = to_,  token_id = token_id, amount = amount), ValidationTransfer.get_type())
 
 class CMTAFA2ErrorMessage:
     """Static enum used for the FA2 related errors, using the `FA2_` prefix"""
@@ -78,6 +86,7 @@ class CMTAFA2ErrorMessage:
     SNAPSHOT_IN_PAST = "{}SNAPSHOT_IN_PAST".format(PREFIX)
     SNAPSHOT_ONGOING = "{}SNAPSHOT_ONGOING".format(PREFIX)
     SNAPSHOT_ALREADY_SCHEDULED = "{}ALREADY_SCHEDULED".format(PREFIX)
+    INVALID_RULE = "{}INVALID_RULE".format(PREFIX)
         
 class CMTAFA2(AdministrableFA2):
     """FA2 Contract blueprint for CMTA tokens""" 
@@ -136,7 +145,7 @@ class CMTAFA2(AdministrableFA2):
             sp.verify((~self.data.token_context.contains(token_id)), message = CMTAFA2ErrorMessage.TOKEN_EXISTS)            
             administrator_ledger_key = LedgerKey.make(token_id, sp.sender)
             sp.verify(self.data.administrators.get(administrator_ledger_key, sp.nat(0))==AdministratorState.IS_ADMIN, message = AdministrableErrorMessage.NOT_ADMIN)
-            self.data.token_context[token_id] = sp.record(is_paused=False, validate_transfer_rule_contract=NULL_ADDRESS, current_snapshot=sp.none, next_snapshot=sp.none)
+            self.data.token_context[token_id] = sp.record(is_paused=False, validate_transfer_rule_contract=sp.none, current_snapshot=sp.none, next_snapshot=sp.none)
         
     @sp.entry_point
     def mint(self, token_amounts):
@@ -209,7 +218,7 @@ class CMTAFA2(AdministrableFA2):
         with sp.for_('rule', rules) as rule:
             administrator_ledger_key = LedgerKey.make(rule.token_id, sp.sender)
             sp.verify(self.data.administrators.get(administrator_ledger_key, sp.nat(0))==AdministratorState.IS_ADMIN, message = AdministrableErrorMessage.NOT_ADMIN)
-            self.data.token_context[rule.token_id].validate_transfer_rule_contract = rule.rule_contract
+            self.data.token_context[rule.token_id].validate_transfer_rule_contract = sp.some(rule.rule_contract)
     
     @sp.entry_point
     def schedule_snapshot(self, token_id, snapshot_timestamp):
@@ -245,7 +254,7 @@ class CMTAFA2(AdministrableFA2):
         self.data.token_metadata = sp.big_map(tkey=sp.TNat, tvalue = TokenMetadata.get_type())
         self.data.total_supply = sp.big_map(tkey=sp.TNat, tvalue = sp.TNat)
         self.data.operators = sp.big_map(tkey=OperatorKey.get_type(), tvalue = sp.TUnit)
-        self.data.token_context = sp.big_map(tkey=sp.TNat, tvalue=sp.TRecord(is_paused=sp.TBool, validate_transfer_rule_contract=sp.TAddress, current_snapshot=sp.TOption(sp.TTimestamp), next_snapshot=sp.TOption(sp.TTimestamp)))
+        self.data.token_context = sp.big_map(tkey=sp.TNat, tvalue=sp.TRecord(is_paused=sp.TBool, validate_transfer_rule_contract=sp.TOption(sp.TAddress), current_snapshot=sp.TOption(sp.TTimestamp), next_snapshot=sp.TOption(sp.TTimestamp)))
         self.data.identities = sp.big_map(tkey=sp.TAddress, tvalue=sp.TBytes)
     # Owner entry points
     # --- END ---
@@ -267,9 +276,9 @@ class CMTAFA2(AdministrableFA2):
                 to_user = sp.local("to_user", LedgerKey.make(tx.token_id, tx.to_))
                 operator_key = OperatorKey.make(tx.token_id, transfer.from_, sp.sender)
                 token_context = sp.local("token_context", self.data.token_context[tx.token_id])
-                validate_transfer_contract = sp.contract(Transfer.get_type(), token_context.value.validate_transfer_rule_contract, entry_point="validate_transfer")
-                with sp.if_(validate_transfer_contract.is_some()):
-                    sp.transfer(transfer, sp.mutez(0), validate_transfer_contract.open_some())
+                with sp.if_(token_context.value.validate_transfer_rule_contract.is_some()):
+                    is_transfer_valid = sp.view("view_is_transfer_valid", token_context.value.validate_transfer_rule_contract.open_some(CMTAFA2ErrorMessage.INVALID_RULE), ValidationTransfer.make(transfer.from_, tx.to_, tx.token_id, tx.amount), t = sp.TBool).open_some(CMTAFA2ErrorMessage.INVALID_RULE)
+                    sp.verify(is_transfer_valid, message=CMTAFA2ErrorMessage.CANNOT_TRANSFER)       
                 sp.verify(((transfer.from_ == sp.sender) | self.data.operators.contains(operator_key)), message = FA2ErrorMessage.NOT_OWNER) # allows of meta transfers
                 sp.verify(self.data.token_metadata.contains(tx.token_id), message = FA2ErrorMessage.TOKEN_UNDEFINED)
                 sp.verify(~token_context.value.is_paused, message = CMTAFA2ErrorMessage.TOKEN_PAUSED)

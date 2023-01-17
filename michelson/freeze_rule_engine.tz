@@ -1,4 +1,4 @@
-parameter (or (address %freeze_account) (or (address %unfreeze_account) (pair %validate_transfer (address %from_) (list %txs (pair (address %to_) (pair (nat %token_id) (nat %amount)))))));
+parameter (or (address %freeze_account) (address %unfreeze_account));
 storage   (pair (address %administrator) (big_map %frozen_accounts address unit));
 code
   {
@@ -30,67 +30,58 @@ code
         UPDATE 2;   # @storage
       }
       {
-        IF_LEFT
+        SWAP;       # @storage : @parameter%unfreeze_account
+        # == unfreeze_account ==
+        # sp.verify(sp.sender == self.data.administrator, 'ADM_NOT_ADMIN') # @storage : @parameter%unfreeze_account
+        DUP;        # @storage : @storage : @parameter%unfreeze_account
+        DUG 2;      # @storage : @parameter%unfreeze_account : @storage
+        CAR;        # address : @parameter%unfreeze_account : @storage
+        SENDER;     # @sender : address : @parameter%unfreeze_account : @storage
+        COMPARE;    # int : @parameter%unfreeze_account : @storage
+        EQ;         # bool : @parameter%unfreeze_account : @storage
+        IF
+          {}
           {
-            SWAP;       # @storage : @parameter%unfreeze_account
-            # == unfreeze_account ==
-            # sp.verify(sp.sender == self.data.administrator, 'ADM_NOT_ADMIN') # @storage : @parameter%unfreeze_account
-            DUP;        # @storage : @storage : @parameter%unfreeze_account
-            DUG 2;      # @storage : @parameter%unfreeze_account : @storage
-            CAR;        # address : @parameter%unfreeze_account : @storage
-            SENDER;     # @sender : address : @parameter%unfreeze_account : @storage
-            COMPARE;    # int : @parameter%unfreeze_account : @storage
-            EQ;         # bool : @parameter%unfreeze_account : @storage
-            IF
-              {}
-              {
-                PUSH string "ADM_NOT_ADMIN"; # string : @parameter%unfreeze_account : @storage
-                FAILWITH;   # FAILED
-              }; # @parameter%unfreeze_account : @storage
-            SWAP;       # @storage : @parameter%unfreeze_account
-            # del self.data.frozen_accounts[params] # @storage : @parameter%unfreeze_account
-            DUP;        # @storage : @storage : @parameter%unfreeze_account
-            CDR;        # big_map address unit : @storage : @parameter%unfreeze_account
-            NONE unit;  # option unit : big_map address unit : @storage : @parameter%unfreeze_account
-            DIG 3;      # @parameter%unfreeze_account : option unit : big_map address unit : @storage
-            UPDATE;     # big_map address unit : @storage
-            UPDATE 2;   # @storage
-          }
-          {
-            # == validate_transfer ==
-            # for tx in params.txs: ... # @parameter%validate_transfer : @storage
-            DUP;        # @parameter%validate_transfer : @parameter%validate_transfer : @storage
-            CDR;        # list (pair (address %to_) (pair (nat %token_id) (nat %amount))) : @parameter%validate_transfer : @storage
-            ITER
-              {
-                # sp.verify(~ (self.data.frozen_accounts.contains(params.from_)), 'CM_CANNOT_TRANSFER') # pair (address %to_) (pair (nat %token_id) (nat %amount)) : @parameter%validate_transfer : @storage
-                DUP 3;      # @storage : pair (address %to_) (pair (nat %token_id) (nat %amount)) : @parameter%validate_transfer : @storage
-                CDR;        # big_map address unit : pair (address %to_) (pair (nat %token_id) (nat %amount)) : @parameter%validate_transfer : @storage
-                DUP 3;      # @parameter%validate_transfer : big_map address unit : pair (address %to_) (pair (nat %token_id) (nat %amount)) : @parameter%validate_transfer : @storage
-                CAR;        # address : big_map address unit : pair (address %to_) (pair (nat %token_id) (nat %amount)) : @parameter%validate_transfer : @storage
-                MEM;        # bool : pair (address %to_) (pair (nat %token_id) (nat %amount)) : @parameter%validate_transfer : @storage
-                IF
-                  {
-                    PUSH string "CM_CANNOT_TRANSFER"; # string : pair (address %to_) (pair (nat %token_id) (nat %amount)) : @parameter%validate_transfer : @storage
-                    FAILWITH;   # FAILED
-                  }
-                  {}; # pair (address %to_) (pair (nat %token_id) (nat %amount)) : @parameter%validate_transfer : @storage
-                # sp.verify(~ (self.data.frozen_accounts.contains(tx.to_)), 'CM_CANNOT_TRANSFER') # pair (address %to_) (pair (nat %token_id) (nat %amount)) : @parameter%validate_transfer : @storage
-                DUP 3;      # @storage : pair (address %to_) (pair (nat %token_id) (nat %amount)) : @parameter%validate_transfer : @storage
-                CDR;        # big_map address unit : pair (address %to_) (pair (nat %token_id) (nat %amount)) : @parameter%validate_transfer : @storage
-                SWAP;       # pair (address %to_) (pair (nat %token_id) (nat %amount)) : big_map address unit : @parameter%validate_transfer : @storage
-                CAR;        # address : big_map address unit : @parameter%validate_transfer : @storage
-                MEM;        # bool : @parameter%validate_transfer : @storage
-                IF
-                  {
-                    PUSH string "CM_CANNOT_TRANSFER"; # string : @parameter%validate_transfer : @storage
-                    FAILWITH;   # FAILED
-                  }
-                  {}; # @parameter%validate_transfer : @storage
-              }; # @parameter%validate_transfer : @storage
-            DROP;       # @storage
-          }; # @storage
+            PUSH string "ADM_NOT_ADMIN"; # string : @parameter%unfreeze_account : @storage
+            FAILWITH;   # FAILED
+          }; # @parameter%unfreeze_account : @storage
+        SWAP;       # @storage : @parameter%unfreeze_account
+        # del self.data.frozen_accounts[params] # @storage : @parameter%unfreeze_account
+        DUP;        # @storage : @storage : @parameter%unfreeze_account
+        CDR;        # big_map address unit : @storage : @parameter%unfreeze_account
+        NONE unit;  # option unit : big_map address unit : @storage : @parameter%unfreeze_account
+        DIG 3;      # @parameter%unfreeze_account : option unit : big_map address unit : @storage
+        UPDATE;     # big_map address unit : @storage
+        UPDATE 2;   # @storage
       }; # @storage
     NIL operation; # list operation : @storage
     PAIR;       # pair (list operation) @storage
+  };
+view
+  "view_is_transfer_valid" (pair (address %from_) (pair (address %to_) (pair (nat %token_id) (nat %amount)))) bool
+  {
+    UNPAIR;     # @parameter : @storage
+    SWAP;       # @storage : @parameter
+    # sp.result((~ (self.data.frozen_accounts.contains(params.from_))) & (~ (self.data.frozen_accounts.contains(params.to_)))) # @storage : @parameter
+    DUP;        # @storage : @storage : @parameter
+    DUG 2;      # @storage : @parameter : @storage
+    CDR;        # big_map address unit : @parameter : @storage
+    SWAP;       # @parameter : big_map address unit : @storage
+    DUP;        # @parameter : @parameter : big_map address unit : @storage
+    DUG 2;      # @parameter : big_map address unit : @parameter : @storage
+    CAR;        # address : big_map address unit : @parameter : @storage
+    MEM;        # bool : @parameter : @storage
+    IF
+      {
+        DROP 2;     # 
+        PUSH bool False; # bool
+      }
+      {
+        SWAP;       # @storage : @parameter
+        CDR;        # big_map address unit : @parameter
+        SWAP;       # @parameter : big_map address unit
+        GET 3;      # address : big_map address unit
+        MEM;        # bool
+        NOT;        # bool
+      }; # bool
   };

@@ -63,7 +63,7 @@ You can find a sample token metadata in the metadata folder. Once uploaded to ei
 
 ### Rule Engine
 
-This reference implementation can either be extended/adapted by code. Or another option if the customization is only on the transferrability you can implement and set a `rule_contract`. If a rule contract is set, it needs to provide a `validate_transfer(transfer: Transfer)` entry point, this entry point will be invoked on transfer, if it passes the transfer will go through, if it fails however the transfer is rolled back.
+This reference implementation can either be extended/adapted by code. Or another option if the customization is only on the transferrability you can implement and set a `rule_contract`. If a rule contract is set, it needs to provide a `view_is_transfer_valid(transfer: ValidationTransfer)` on-chain view which returns a bool, this view will be invoked on transfer, if it passes (returns true) the transfer will go through, if it fails (returns false) the transfer is rolled back.
 
 The rule engine can be used for use cases like freezing or KYC/DID checks.
 
