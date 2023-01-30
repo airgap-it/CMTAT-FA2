@@ -104,8 +104,13 @@ class CMTAFA2(AdministrableFA2):
         super().__init__(administrators)
 
     # Helper lambdas
-    # Note: This cannot be a lambda because it messes up the storage.
-    def bootstrap_snapshot(self, token_context, token_id):
+    @sp.private_lambda(with_operations=False, with_storage="read-write", wrap_call=True)
+    def bootstrap_snapshot(self, params):
+        sp.set_type_expr(params, sp.TPair(TokenContext.get_type(), sp.TNat))
+        raw_token_context, token_id = sp.match_pair(params)
+        
+        token_context=  sp.local("token_context", raw_token_context)
+
         with sp.if_(token_context.value.next_snapshot.is_some()):
             with sp.if_(token_context.value.next_snapshot.open_some() < sp.now):
                 with sp.if_(token_context.value.current_snapshot.is_some()):
@@ -114,7 +119,7 @@ class CMTAFA2(AdministrableFA2):
                 token_context.value.current_snapshot = token_context.value.next_snapshot
                 token_context.value.next_snapshot = sp.none
                 self.data.token_context[token_id] = token_context.value
-
+    
     @sp.private_lambda(with_operations=False, with_storage="read-write", wrap_call=True)
     def set_snapshot_ledger(self, params):
         sp.set_type_expr(params, sp.TTuple(TokenContext.get_type(), sp.TNat, sp.TAddress))
@@ -159,7 +164,9 @@ class CMTAFA2(AdministrableFA2):
             
             token_context = sp.local("token_context", self.data.token_context[token_amount.token_id])
             
-            self.bootstrap_snapshot(token_context, token_amount.token_id)
+            self.bootstrap_snapshot(sp.pair(token_context.value, token_amount.token_id))
+            token_context.value = self.data.token_context[token_amount.token_id]
+            
             self.set_snapshot_total_supply(sp.pair(token_context.value, token_amount.token_id))
             self.set_snapshot_ledger((token_context.value, token_amount.token_id, token_amount.address))
             
@@ -179,7 +186,9 @@ class CMTAFA2(AdministrableFA2):
             
             token_context = sp.local("token_context", self.data.token_context[token_amount.token_id])
             
-            self.bootstrap_snapshot(token_context, token_amount.token_id)
+            self.bootstrap_snapshot(sp.pair(token_context.value, token_amount.token_id))
+            token_context.value = self.data.token_context[token_amount.token_id]
+            
             self.set_snapshot_total_supply(sp.pair(token_context.value, token_amount.token_id))
             self.set_snapshot_ledger((token_context.value, token_amount.token_id, token_amount.address))
                       
@@ -286,7 +295,9 @@ class CMTAFA2(AdministrableFA2):
                     
                     sp.verify((self.data.ledger[from_user.value] >= tx.amount), message = FA2ErrorMessage.INSUFFICIENT_BALANCE)
                     
-                    self.bootstrap_snapshot(token_context, tx.token_id)
+                    self.bootstrap_snapshot(sp.pair(token_context.value, tx.token_id))
+                    token_context.value = self.data.token_context[tx.token_id]
+            
                     self.set_snapshot_ledger((token_context.value, tx.token_id, tx.to_))
                     self.set_snapshot_ledger((token_context.value, tx.token_id, transfer.from_))
                     
@@ -301,13 +312,13 @@ class CMTAFA2(AdministrableFA2):
     def view_total_supply(self, token_id):
         """Given a token id allows the consumer to view the current total supply."""
         sp.set_type(token_id, sp.TNat)
-        sp.result(self.data.total_supply[token_id])    
+        sp.result(self.data.total_supply.get(token_id,0))    
     
     @sp.onchain_view()
     def view_balance_of(self, ledger_key):
         """Given a ledger key (consisting of token_id = sp.TNat, owner = sp.TAddress) allows the consumer to view the current balance."""
         sp.set_type(ledger_key, LedgerKey.get_type())
-        sp.result(self.data.ledger[ledger_key])    
+        sp.result(self.data.ledger.get(ledger_key,0))    
     
     @sp.onchain_view()
     def view_current_snapshot(self, token_id):
@@ -340,7 +351,7 @@ class CMTAFA2(AdministrableFA2):
             with sp.if_(self.data.snapshot_total_supply.contains(current_snapshot_lookup_key.value)):
                 sp.result(self.data.snapshot_total_supply[current_snapshot_lookup_key.value])
             with sp.else_():
-                sp.result(self.data.total_supply[snapshot_lookup_key.token_id])
+                sp.result(self.data.total_supply.get(snapshot_lookup_key.token_id, 0))
 
     @sp.onchain_view()
     def view_snapshot_balance_of(self, snapshot_ledger_key):
@@ -363,7 +374,7 @@ class CMTAFA2(AdministrableFA2):
             with sp.if_(self.data.snapshot_ledger.contains(current_snapshot_ledger_key.value)):
                 sp.result(self.data.snapshot_ledger[current_snapshot_ledger_key.value])
             with sp.else_():
-                sp.result(self.data.ledger[LedgerKey.make(snapshot_ledger_key.token_id, snapshot_ledger_key.owner)])
+                sp.result(self.data.ledger.get(LedgerKey.make(snapshot_ledger_key.token_id, snapshot_ledger_key.owner), 0))
 
 
 
