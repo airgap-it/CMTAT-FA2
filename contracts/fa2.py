@@ -158,7 +158,7 @@ class BaseFA2(sp.Contract):
             sp.verify(self.data.token_metadata.contains(request.token_id), message = FA2ErrorMessage.TOKEN_UNDEFINED)
             responses.value.push(sp.record(request = request, balance = self.data.ledger.get(LedgerKey.make(request.token_id, request.owner),0)))
             
-        sp.transfer(responses.value, sp.mutez(0), balance_of_request.callback)
+        sp.transfer(responses.value.rev(), sp.mutez(0), balance_of_request.callback)
 
 class AdministratorState:
     """Static enum used for the admin rights and propose flow"""    

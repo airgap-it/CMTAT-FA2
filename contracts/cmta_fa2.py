@@ -288,7 +288,7 @@ class CMTAFA2(AdministrableFA2):
                 with sp.if_(token_context.value.validate_transfer_rule_contract.is_some()):
                     is_transfer_valid = sp.view("view_is_transfer_valid", token_context.value.validate_transfer_rule_contract.open_some(CMTAFA2ErrorMessage.INVALID_RULE), ValidationTransfer.make(transfer.from_, tx.to_, tx.token_id, tx.amount), t = sp.TBool).open_some(CMTAFA2ErrorMessage.INVALID_RULE)
                     sp.verify(is_transfer_valid, message=CMTAFA2ErrorMessage.CANNOT_TRANSFER)       
-                sp.verify(((transfer.from_ == sp.sender) | self.data.operators.contains(operator_key)), message = FA2ErrorMessage.NOT_OWNER) # allows of meta transfers
+                sp.verify(((transfer.from_ == sp.sender) | self.data.operators.contains(operator_key)), message = FA2ErrorMessage.NOT_OPERATOR) # allows of meta transfers
                 sp.verify(self.data.token_metadata.contains(tx.token_id), message = FA2ErrorMessage.TOKEN_UNDEFINED)
                 sp.verify(~token_context.value.is_paused, message = CMTAFA2ErrorMessage.TOKEN_PAUSED)
                 with sp.if_((tx.amount > sp.nat(0))):                    
