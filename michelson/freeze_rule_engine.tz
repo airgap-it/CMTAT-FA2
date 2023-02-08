@@ -1,0 +1,87 @@
+parameter (or (address %freeze_account) (address %unfreeze_account));
+storage   (pair (address %administrator) (big_map %frozen_accounts address unit));
+code
+  {
+    UNPAIR;     # @parameter : @storage
+    IF_LEFT
+      {
+        SWAP;       # @storage : @parameter%freeze_account
+        # == freeze_account ==
+        # sp.verify(sp.sender == self.data.administrator, 'ADM_NOT_ADMIN') # @storage : @parameter%freeze_account
+        DUP;        # @storage : @storage : @parameter%freeze_account
+        DUG 2;      # @storage : @parameter%freeze_account : @storage
+        CAR;        # address : @parameter%freeze_account : @storage
+        SENDER;     # @sender : address : @parameter%freeze_account : @storage
+        COMPARE;    # int : @parameter%freeze_account : @storage
+        EQ;         # bool : @parameter%freeze_account : @storage
+        IF
+          {}
+          {
+            PUSH string "ADM_NOT_ADMIN"; # string : @parameter%freeze_account : @storage
+            FAILWITH;   # FAILED
+          }; # @parameter%freeze_account : @storage
+        SWAP;       # @storage : @parameter%freeze_account
+        # self.data.frozen_accounts[params] = sp.unit # @storage : @parameter%freeze_account
+        DUP;        # @storage : @storage : @parameter%freeze_account
+        CDR;        # big_map address unit : @storage : @parameter%freeze_account
+        PUSH (option unit) (Some Unit); # option unit : big_map address unit : @storage : @parameter%freeze_account
+        DIG 3;      # @parameter%freeze_account : option unit : big_map address unit : @storage
+        UPDATE;     # big_map address unit : @storage
+        UPDATE 2;   # @storage
+      }
+      {
+        SWAP;       # @storage : @parameter%unfreeze_account
+        # == unfreeze_account ==
+        # sp.verify(sp.sender == self.data.administrator, 'ADM_NOT_ADMIN') # @storage : @parameter%unfreeze_account
+        DUP;        # @storage : @storage : @parameter%unfreeze_account
+        DUG 2;      # @storage : @parameter%unfreeze_account : @storage
+        CAR;        # address : @parameter%unfreeze_account : @storage
+        SENDER;     # @sender : address : @parameter%unfreeze_account : @storage
+        COMPARE;    # int : @parameter%unfreeze_account : @storage
+        EQ;         # bool : @parameter%unfreeze_account : @storage
+        IF
+          {}
+          {
+            PUSH string "ADM_NOT_ADMIN"; # string : @parameter%unfreeze_account : @storage
+            FAILWITH;   # FAILED
+          }; # @parameter%unfreeze_account : @storage
+        SWAP;       # @storage : @parameter%unfreeze_account
+        # del self.data.frozen_accounts[params] # @storage : @parameter%unfreeze_account
+        DUP;        # @storage : @storage : @parameter%unfreeze_account
+        CDR;        # big_map address unit : @storage : @parameter%unfreeze_account
+        NONE unit;  # option unit : big_map address unit : @storage : @parameter%unfreeze_account
+        DIG 3;      # @parameter%unfreeze_account : option unit : big_map address unit : @storage
+        UPDATE;     # big_map address unit : @storage
+        UPDATE 2;   # @storage
+      }; # @storage
+    NIL operation; # list operation : @storage
+    PAIR;       # pair (list operation) @storage
+  };
+view
+  "view_is_transfer_valid" (pair (address %from_) (pair (address %to_) (pair (nat %token_id) (nat %amount)))) bool
+  {
+    UNPAIR;     # @parameter : @storage
+    SWAP;       # @storage : @parameter
+    # sp.result((~ (self.data.frozen_accounts.contains(params.from_))) & (~ (self.data.frozen_accounts.contains(params.to_)))) # @storage : @parameter
+    DUP;        # @storage : @storage : @parameter
+    DUG 2;      # @storage : @parameter : @storage
+    CDR;        # big_map address unit : @parameter : @storage
+    SWAP;       # @parameter : big_map address unit : @storage
+    DUP;        # @parameter : @parameter : big_map address unit : @storage
+    DUG 2;      # @parameter : big_map address unit : @parameter : @storage
+    CAR;        # address : big_map address unit : @parameter : @storage
+    MEM;        # bool : @parameter : @storage
+    IF
+      {
+        DROP 2;     # 
+        PUSH bool False; # bool
+      }
+      {
+        SWAP;       # @storage : @parameter
+        CDR;        # big_map address unit : @parameter
+        SWAP;       # @parameter : big_map address unit
+        GET 3;      # address : big_map address unit
+        MEM;        # bool
+        NOT;        # bool
+      }; # bool
+  };
