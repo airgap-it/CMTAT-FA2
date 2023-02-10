@@ -224,3 +224,7 @@ $ SmartPy.sh originate-contract --code out/CMTAFA2/step_000_cont_0_contract.tz -
 $ SmartPy.sh originate-contract --code out/FreezeRuleEngine/step_000_cont_0_contract.tz --storage out/FreezeRuleEngine/step_000_cont_0_storage.tz --rpc https://ghostnet.ecadinfra.com
 ```
 
+## Intellectual property
+
+The code is copyright (c) Tezos Foundation, 2017 - 2023, and is released under [Mozilla Public License
+2.0](./LICENSE.md).
