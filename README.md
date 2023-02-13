@@ -1,17 +1,21 @@
 # CMTA FA2 Blueprint Implementation
 
-This reference implementation provides an easy to use Tezos Token smart contract following
-the FA2 standard defined [here](https://gitlab.com/tzip/tzip/-/blob/master/proposals/tzip-12/).
-[Capital Markets and technology association](https://www.cmta.ch/) (CMTA) has provided guideance 
-on implementing the required functionalities in order to tokeniza a Swiss corporation's equity
-securities. The blueprint document can be found here [Blueprint](https://cmta.ch/content/15de282276334fc837b9687a13726ab9/cmtat-functional-specifications-jan-2022-final.pdf)  
+The [Capital Markets and Technology Association](https://www.cmta.ch/)
+(CMTA) has published [a
+guide](https://cmta.ch/standards/standard-for-the-tokenization-of-shares-of-swiss-corporations-using-the-distributed-ledger-technology)
+regarding the tokenization a Swiss corporation's shares, as well as a
+[token framework](https://cmta.ch/standards/cmta-token-cmtat) (the CMTA
+Token, CMTAT), for which a reference implementation in Solidity [is
+available](https://github.com/CMTA/CMTAT). 
 
-This implementation derived the required functionality from the [CMTAT project](https://github.com/CMTA/CMTAT). 
-
-There are two main differences compared to the mentioned CMTAT project:
+The present repository provides an implementation of the CMTAT standard
+for the Tezos ecosystem, based on the [FA2 token
+standard](https://gitlab.com/tzip/tzip/-/blob/master/proposals/tzip-12/).
+There are two main differences compared to the Solidity reference
+contract:
 
 - FA2 allows for multiple tokens on the same contract. This of course means that we can have per token
-an admin who gets the token 'owner' status as per CMTAT. Since 'owner' in FA2 receives another sematic
+an admin who gets the token 'owner' status as per CMTAT. Since 'owner' in FA2 receives another semantic
  we a use the expression 'token admin' to relate to the 'CMTAT token owner' and 'token owners' for us
  are what CMTAT calls 'holders'.
 - For gas optimization purposes where it makes sense the entry points have been extended to accept lists. 
@@ -32,7 +36,9 @@ This allows for batched operations.
 
 ### Token Metadata
 
-We follow the FA2 standard for the metadata specification. The tzip 16 standard allows to extend the metadata with arbitrary fields. As per CMTA we are using the following mapping.
+We follow the FA2 standard for the metadata specification. The TZIP-16
+standard allows to extend the metadata with arbitrary fields. As per
+CMTAT we are using the following mapping.
 
 Mandatory attributes, applicable to all CMTAT tokens:
 
@@ -59,7 +65,7 @@ Optional attributes, applicable to tokens used for debt securities:
 | Business day convention | businessDayConvention |
 | Public holidays calendar | publicHolidaysCalendar | 
 
-You can find a sample token metadata in the metadata folder. Once uploaded to either a static url or IPFS you can simply convert the UTF8 string of the URI to bytes and set said bytes in the `set_token_metadata` entry point. 
+You can find a sample token metadata in the metadata folder. Once uploaded to either a static URL or IPFS you can simply convert the UTF8 string of the URI to bytes and set said bytes in the `set_token_metadata` entry point. 
 
 ### Rule Engine
 
@@ -82,11 +88,11 @@ On chain, you can check the snapshot values by consuming the views `view_snapsho
 ## entry points
 ### `transfer(self, transfers)`
 
-Sligthly adapted FA2 transfer method which includes pause, rule engine and snapshot functionality
+Slightly adapted FA2 transfer method which includes pause, rule engine and snapshot functionality.
 
 ### `set_identity(self, identity)`
 
-Allows a user to set the own identity
+Allows a user to set the own identity.
 
 ### `kill(self)`
 
@@ -126,7 +132,7 @@ Allows minting new tokens to the defined recipient address, only a token adminis
 
 ### `initialise_token(self, token_ids)`
 
-Initialise the token with the required additional token context, can only be called once per token and only one of its admin can call this
+Initialise the token with the required additional token context, can only be called once per token and only one of its admin can call this.
 
 ### `remove_administrator(self, token_id, administrator_to_remove)`
 
@@ -148,11 +154,12 @@ The definition of a new token requires its metadata to be set. Only the administ
 
 ### `balance_of(self, balance_of_request)`
 
-As per FA2 standard, takes balance_of requests and reponds on the provided callback contract.
+As per FA2 standard, takes balance_of requests and responds on the provided callback contract.
     
 ### `update_operators(self, update_operators)`
 
-As per FA2 standard, allows a token owner to set an operator who will be allowed to perform transfers on her/his behalf
+As per FA2 standard, allows a token owner to set an operator who will be
+allowed to perform transfers on their behalf.
 
 ## Views
 
@@ -192,7 +199,7 @@ $ sh <(curl -s https://smartpy.io/cli/install.sh)
 
 You can read more about the installation here: https://smartpy.io/cli/
 
-If you feel lazy you can simply open the project in vscode and allow the devcontainer to be built, it will configure everythign for you.
+If you feel lazy you can simply open the project in VS Code and allow the devcontainer to be built, it will configure everything for you.
 
 ### Paths
 
