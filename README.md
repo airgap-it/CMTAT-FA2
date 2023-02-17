@@ -69,13 +69,15 @@ You can find a sample token metadata in the metadata folder. Once uploaded to ei
 
 ### Rule Engine
 
-This reference implementation can either be extended/adapted by code. Or another option if the customization is only on the transferrability you can implement and set a `rule_contract`. If a rule contract is set, it needs to provide a `view_is_transfer_valid(transfer: ValidationTransfer)` on-chain view which returns a bool, this view will be invoked on transfer, if it passes (returns true) the transfer will go through, if it fails (returns false) the transfer is rolled back.
+The CMTAT-FA2 reference implementation allows customizations around the transferrability to be implemented using the rule engine. This has the advantage that upgrades to the logic can be applied by the token admin by calling the `set_rule_engines` entrypoint. The only interface a rule engines is required to implement to be valid is the on-chain view `view_is_transfer_valid(transfer: ValidationTransfer)` which returns a bool. 
+ 
+If a rule contract is set, it needs to provide a `view_is_transfer_valid(transfer: ValidationTransfer)` on-chain view which returns a bool, this view will be invoked on transfer, if it passes (returns true) the transfer will go through, if it fails (returns false) the transfer is rolled back.
 
-The rule engine can be used for use cases like freezing or KYC/DID checks.
+The rule engine can be used for use cases like freezing or KYC/DID checks. A reference implementation of such a rule engine is provided for the Freezing/Unfreezing of accounts.
 
 #### Freezing/Unfreezing of accounts
 
-CMTA has in the specifications the ability to freeze/unfreeze accounts. Frozen accounts won't be allowed to send or receive tokens. Because the rule engine is the perfect candidate to handle this, instead of creating the reference implementation inside the `CMTAFA2` contract we provide a reference implementation of a freeze rule engine called `FreezeRuleEngine`. The tests show how this can be used.
+CMTA has in the specifications the ability to freeze/unfreeze accounts. Frozen accounts won't be allowed to send or receive tokens. Because the rule engine is the perfect candidate to handle this, instead of creating the reference implementation inside the `CMTAFA2` contract we provide a reference implementation of a freeze rule engine called `FreezeRuleEngine` (`contracts/freeze_rule_engine.py`). The tests show how this can be used.
 
 ### Snapshots
 
