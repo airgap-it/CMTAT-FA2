@@ -124,7 +124,7 @@ class BaseFA2(sp.Contract):
                 operator_key = OperatorKey.make(tx.token_id, transfer.from_, sp.sender)
 
                 sp.verify(self.data.ledger.get(from_user,sp.nat(0)) >= tx.amount, message = FA2ErrorMessage.INSUFFICIENT_BALANCE)                                     
-                sp.verify((sp.sender == transfer.from_) | self.data.operators.contains(operator_key), message=FA2ErrorMessage.NOT_OWNER)
+                sp.verify((sp.sender == transfer.from_) | self.data.operators.contains(operator_key), message=FA2ErrorMessage.NOT_OPERATOR)
                 
                 with sp.if_(tx.amount >= sp.nat(0)):
                     self.data.ledger[from_user] = sp.as_nat(self.data.ledger[from_user] - tx.amount)
